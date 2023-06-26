@@ -27,7 +27,7 @@ In addition to the pretrained model, contained herein are functions for tokenizi
 ```bash
 git clone https://huggingface.co/ctheodoris/Geneformer
 cd Geneformer
-pip install .
+conda install loompy numpy datasets transformers
 ```
 
 For usage, see [examples](https://huggingface.co/ctheodoris/Geneformer/tree/main/examples) for tokenizing, pretraining, fine-tuning, hyperparameter tuning, and in silico perturbation. Please note that the fine-tuning examples are meant to be generally applicable and the input datasets and labels will vary dependent on the downstream task. Example input files for a few of the downstream tasks demonstrated in the manuscript are located within the [example_input_files directory](https://huggingface.co/datasets/ctheodoris/Genecorpus-30M/tree/main/example_input_files) in the dataset repository, but these only represent a few example fine-tuning applications. 
