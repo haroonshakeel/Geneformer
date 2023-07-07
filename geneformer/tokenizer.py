@@ -14,6 +14,9 @@ Usage:
   tk.tokenize_data("loom_data_directory", "output_directory", "output_prefix")
 """
 
+
+from __future__ import annotations
+from typing import Literal
 import pickle
 from pathlib import Path
 
@@ -85,41 +88,113 @@ class TranscriptomeTokenizer:
         # protein-coding and miRNA gene list dictionary for selecting .loom rows for tokenization
         self.genelist_dict = dict(zip(self.gene_keys, [True] * len(self.gene_keys)))
 
-    def tokenize_data(self, loom_data_directory, output_directory, output_prefix):
+    def tokenize_data(
+        self,
+        data_directory: Path | str,
+        output_directory: Path | str,
+        output_prefix: str,
+        file_format: Literal["loom", "h5ad"] = "loom",
+    ):
         """
         Tokenize .loom files in loom_data_directory and save as tokenized .dataset in output_directory.
 
         Parameters
         ----------
         loom_data_directory : Path
-            Path to directory containing loom files
+            Path to directory containing loom files or anndata files
         output_directory : Path
             Path to directory where tokenized data will be saved as .dataset
         output_prefix : str
             Prefix for output .dataset
+        file_format : str
+            Format of input files. Can be "loom" or "h5ad".
         """
-        tokenized_cells, cell_metadata = self.tokenize_files(Path(loom_data_directory))
+        tokenized_cells, cell_metadata = self.tokenize_files(
+            Path(data_directory), file_format
+        )
         tokenized_dataset = self.create_dataset(tokenized_cells, cell_metadata)
 
         output_path = (Path(output_directory) / output_prefix).with_suffix(".dataset")
         tokenized_dataset.save_to_disk(output_path)
 
-    def tokenize_files(self, loom_data_directory):
+    def tokenize_files(
+        self, data_directory, file_format: Literal["loom", "h5ad"] = "loom"
+    ):
         tokenized_cells = []
         loom_cell_attr = [attr_key for attr_key in self.custom_attr_name_dict.keys()]
-        cell_metadata = {attr_key: [] for attr_key in self.custom_attr_name_dict.values()}
+        cell_metadata = {
+            attr_key: [] for attr_key in self.custom_attr_name_dict.values()
+        }
 
-        # loops through directories to tokenize .loom files
-        for loom_file_path in loom_data_directory.glob("*.loom"):
-            print(f"Tokenizing {loom_file_path}")
-            file_tokenized_cells, file_cell_metadata = self.tokenize_file(
-                loom_file_path
-            )
+        # loops through directories to tokenize .loom or .h5ad files
+        tokenize_file_fn = (
+            self.tokenize_file if file_format == "loom" else self.tokenize_anndata
+        )
+        for file_path in data_directory.glob("*.{}".format(file_format)):
+            print(f"Tokenizing {file_path}")
+            file_tokenized_cells, file_cell_metadata = tokenize_file_fn(file_path)
             tokenized_cells += file_tokenized_cells
             for k in loom_cell_attr:
                 cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
 
         return tokenized_cells, cell_metadata
+
+    def tokenize_anndata(self, adata_file_path):
+        import anndata as ad
+
+        adata = ad.read(adata_file_path)
+        file_cell_metadata = {
+            attr_key: [] for attr_key in self.custom_attr_name_dict.keys()
+        }
+
+        coding_miRNA_loc = np.where(
+            [self.genelist_dict.get(i, False) for i in adata.var["ensembl_id"]]
+        )[0]
+        norm_factor_vector = np.array(
+            [
+                self.gene_median_dict[i]
+                for i in adata.var["ensembl_id"][coding_miRNA_loc]
+            ]
+        )
+        coding_miRNA_ids = adata.var["ensembl_id"][coding_miRNA_loc]
+        coding_miRNA_tokens = np.array(
+            [self.gene_token_dict[i] for i in coding_miRNA_ids]
+        )
+
+        try:
+            adata.obs["filter_pass"]
+        except KeyError:
+            var_exists = False
+        else:
+            var_exists = True
+
+        if var_exists is True:
+            filter_pass_loc = np.where(
+                [True if i == 1 else False for i in adata.obs["filter_pass"]]
+            )[0]
+        elif var_exists is False:
+            print(
+                f"{adata_file_path} has no column attribute 'filter_pass'; tokenizing all cells."
+            )
+            filter_pass_loc = np.array([i for i in range(adata.shape[0])])
+
+        tokenized_cells = []
+        adata_filter = adata[
+            filter_pass_loc, coding_miRNA_loc  # filter cells and genes
+        ]
+
+        X_norm = (adata_filter.X / adata.X.sum(1) * 10_000 / norm_factor_vector).tocsr()
+
+        tokenized_cells += [
+            tokenize_cell(X_norm[i, ...].A.flatten(), coding_miRNA_tokens)
+            for i in range(X_norm.shape[0])
+        ]
+
+        # add custom attributes for subview to dict
+        for k in file_cell_metadata.keys():
+            file_cell_metadata[k] += adata_filter.obs[k].tolist()
+
+        return tokenized_cells, file_cell_metadata
 
     def tokenize_file(self, loom_file_path):
         file_cell_metadata = {
@@ -162,7 +237,9 @@ class TranscriptomeTokenizer:
 
             # scan through .loom files and tokenize cells
             tokenized_cells = []
-            for (_ix, _selection, view) in data.scan(items=filter_pass_loc, axis=1):
+            for _ix, _selection, view in data.scan(
+                items=filter_pass_loc, axis=1, layers=""
+            ):
                 # select subview with protein-coding and miRNA genes
                 subview = view.view[coding_miRNA_loc, :]
 
@@ -174,6 +251,7 @@ class TranscriptomeTokenizer:
                     * 10_000
                     / norm_factor_vector[:, None]
                 )
+
                 # tokenize subview gene vectors
                 tokenized_cells += [
                     tokenize_cell(subview_norm_array[:, i], coding_miRNA_tokens)
