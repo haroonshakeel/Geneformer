@@ -183,7 +183,12 @@ class TranscriptomeTokenizer:
             filter_pass_loc, coding_miRNA_loc  # filter cells and genes
         ]
 
-        X_norm = (adata_filter.X / adata.X.sum(1) * 10_000 / norm_factor_vector).tocsr()
+        X_norm = (
+            adata_filter.X
+            / adata.obs["n_counts"].values.reshape(-1, 1)
+            * 10_000
+            / norm_factor_vector
+        ).tocsr()
 
         tokenized_cells += [
             tokenize_cell(X_norm[i, ...].A.flatten(), coding_miRNA_tokens)
