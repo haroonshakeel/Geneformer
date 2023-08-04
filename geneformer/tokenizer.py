@@ -288,10 +288,7 @@ class TranscriptomeTokenizer:
         # create dataset
         def dict_generator():
             for i in range(len(tokenized_cells)):
-                yield {
-                    'input_ids': dataset_dict['input_ids'][i], 
-                    'cell_type': dataset_dict['cell_type'][i]
-                }
+                yield {k: dataset_dict[k][i] for k in dataset_dict.keys()}
         output_dataset = Dataset.from_generator(dict_generator, num_proc=self.nproc)
 
         # truncate dataset
