@@ -604,7 +604,7 @@ class InSilicoPerturber:
         "filter_data": {None, dict},
         "cell_states_to_model": {None, dict},
         "max_ncells": {None, int},
-        "inds_to_perturb": {"all", dict},
+        "cell_inds_to_perturb": {"all", dict},
         "emb_layer": {-1, 0},
         "forward_batch_size": {int},
         "nproc": {int},
@@ -623,7 +623,7 @@ class InSilicoPerturber:
         filter_data=None,
         cell_states_to_model=None,
         max_ncells=None,
-        inds_to_perturb="all",
+        cell_inds_to_perturb="all",
         emb_layer=-1,
         forward_batch_size=100,
         nproc=4,
@@ -689,9 +689,9 @@ class InSilicoPerturber:
         max_ncells : None, int
             Maximum number of cells to test.
             If None, will test all cells.
-        inds_to_perturb : "all", list
+        cell_inds_to_perturb : "all", list
             Default is perturbing each cell in the dataset.
-            Otherwise, may provide a dict of indices of genes to perturb with keys start_ind and end_ind.
+            Otherwise, may provide a dict of indices of cells to perturb with keys start_ind and end_ind.
             start_ind: the first index to perturb.
             end_ind: the last index to perturb (exclusive).
             Indices will be selected *after* the filter_data criteria and sorting.
@@ -732,7 +732,7 @@ class InSilicoPerturber:
         self.filter_data = filter_data
         self.cell_states_to_model = cell_states_to_model
         self.max_ncells = max_ncells
-        self.inds_to_perturb = inds_to_perturb
+        self.cell_inds_to_perturb = cell_inds_to_perturb
         self.emb_layer = emb_layer
         self.forward_batch_size = forward_batch_size
         self.nproc = nproc
@@ -908,15 +908,15 @@ class InSilicoPerturber:
                         "Values in filter_data dict must be lists. " \
                         f"Changing {key} value to list ([{value}]).")
                     
-        if self.inds_to_perturb != "all":
-            if set(self.inds_to_perturb.keys()) != {"start", "end"}:
+        if self.cell_inds_to_perturb != "all":
+            if set(self.cell_inds_to_perturb.keys()) != {"start", "end"}:
                 logger.error(
-                    "If inds_to_perturb is a dictionary, keys must be 'start' and 'end'."
+                    "If cell_inds_to_perturb is a dictionary, keys must be 'start' and 'end'."
                 )
                 raise
-            if self.inds_to_perturb["start"] < 0 or self.inds_to_perturb["end"] < 0:
+            if self.cell_inds_to_perturb["start"] < 0 or self.cell_inds_to_perturb["end"] < 0:
                 logger.error(
-                    'inds_to_perturb must be positive.'
+                    'cell_inds_to_perturb must be positive.'
                 )
                 raise
 
@@ -1017,15 +1017,15 @@ class InSilicoPerturber:
         cos_sims_dict = defaultdict(list)
         pickle_batch = -1
         filtered_input_data = downsample_and_sort(filtered_input_data, self.max_ncells)
-        if self.inds_to_perturb != "all":
-            if self.inds_to_perturb["start"] >= len(filtered_input_data):
-                logger.error("inds_to_perturb['start'] is larger than the filtered dataset.")
+        if self.cell_inds_to_perturb != "all":
+            if self.cell_inds_to_perturb["start"] >= len(filtered_input_data):
+                logger.error("cell_inds_to_perturb['start'] is larger than the filtered dataset.")
                 raise
-            if self.inds_to_perturb["end"] > len(filtered_input_data):
-                logger.warning("inds_to_perturb['end'] is larger than the filtered dataset. \
+            if self.cell_inds_to_perturb["end"] > len(filtered_input_data):
+                logger.warning("cell_inds_to_perturb['end'] is larger than the filtered dataset. \
                                Setting to the end of the filtered dataset.")
-                self.inds_to_perturb["end"] = len(filtered_input_data)
-            filtered_input_data = filtered_input_data.select([i for i in range(self.inds_to_perturb["start"], self.inds_to_perturb["end"])])
+                self.cell_inds_to_perturb["end"] = len(filtered_input_data)
+            filtered_input_data = filtered_input_data.select([i for i in range(self.cell_inds_to_perturb["start"], self.cell_inds_to_perturb["end"])])
         
         # make perturbation batch w/ single perturbation in multiple cells
         if self.perturb_group == True:
