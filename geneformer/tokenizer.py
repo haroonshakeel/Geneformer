@@ -27,12 +27,22 @@ warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 import anndata as ad
 import loompy as lp
 import numpy as np
+import scipy.sparse as sp
 from datasets import Dataset
 
 logger = logging.getLogger(__name__)
 
 GENE_MEDIAN_FILE = Path(__file__).parent / "gene_median_dictionary.pkl"
 TOKEN_DICTIONARY_FILE = Path(__file__).parent / "token_dictionary.pkl"
+
+
+def rank_genes(gene_vector, gene_tokens):
+    """
+    Rank gene expression vector.
+    """
+    # sort by median-scaled gene values
+    sorted_indices = np.argsort(-gene_vector)
+    return gene_tokens[sorted_indices]
 
 
 def tokenize_cell(gene_vector, gene_tokens):
@@ -42,11 +52,8 @@ def tokenize_cell(gene_vector, gene_tokens):
     # create array of gene vector with token indices
     # mask undetected genes
     nonzero_mask = np.nonzero(gene_vector)[0]
-    # sort by median-scaled gene values
-    sorted_indices = np.argsort(-gene_vector[nonzero_mask])
-    # tokenize
-    sentence_tokens = gene_tokens[nonzero_mask][sorted_indices]
-    return sentence_tokens
+    # rank by median-scaled gene values
+    return rank_genes(gene_vector[nonzero_mask], gene_tokens[nonzero_mask])
 
 
 class TranscriptomeTokenizer:
@@ -101,6 +108,7 @@ class TranscriptomeTokenizer:
         output_directory: Path | str,
         output_prefix: str,
         file_format: Literal["loom", "h5ad"] = "loom",
+        use_generator: bool = False,
     ):
         """
         Tokenize .loom files in loom_data_directory and save as tokenized .dataset in output_directory.
@@ -115,11 +123,13 @@ class TranscriptomeTokenizer:
             Prefix for output .dataset
         file_format : str
             Format of input files. Can be "loom" or "h5ad".
+        use_generator : bool
+            Whether to use generator or dict for tokenization.
         """
         tokenized_cells, cell_metadata = self.tokenize_files(
             Path(data_directory), file_format
         )
-        tokenized_dataset = self.create_dataset(tokenized_cells, cell_metadata)
+        tokenized_dataset = self.create_dataset(tokenized_cells, cell_metadata, use_generator=use_generator)
 
         output_path = (Path(output_directory) / output_prefix).with_suffix(".dataset")
         tokenized_dataset.save_to_disk(output_path)
@@ -129,7 +139,7 @@ class TranscriptomeTokenizer:
     ):
         tokenized_cells = []
         if self.custom_attr_name_dict is not None:
-            loom_cell_attr = [attr_key for attr_key in self.custom_attr_name_dict.keys()]
+            cell_attr = [attr_key for attr_key in self.custom_attr_name_dict.keys()]
             cell_metadata = {attr_key: [] for attr_key in self.custom_attr_name_dict.values()}
 
         # loops through directories to tokenize .loom files
@@ -144,7 +154,7 @@ class TranscriptomeTokenizer:
             file_tokenized_cells, file_cell_metadata = tokenize_file_fn(file_path)
             tokenized_cells += file_tokenized_cells
             if self.custom_attr_name_dict is not None:
-                for k in loom_cell_attr:
+                for k in cell_attr:
                     cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
             else:
                 cell_metadata = None
@@ -155,8 +165,8 @@ class TranscriptomeTokenizer:
             raise
         return tokenized_cells, cell_metadata
 
-    def tokenize_anndata(self, adata_file_path):
-        adata = ad.read(adata_file_path)
+    def tokenize_anndata(self, adata_file_path, target_sum=10_000, chunk_size=512):
+        adata = ad.read(adata_file_path, backed="r")
         file_cell_metadata = {
             attr_key: [] for attr_key in self.custom_attr_name_dict.keys()
         }
@@ -176,7 +186,7 @@ class TranscriptomeTokenizer:
         )
 
         try:
-            adata.obs["filter_pass"]
+            _ = adata.obs["filter_pass"]
         except KeyError:
             var_exists = False
         else:
@@ -193,24 +203,26 @@ class TranscriptomeTokenizer:
             filter_pass_loc = np.array([i for i in range(adata.shape[0])])
 
         tokenized_cells = []
-        adata_filter = adata[
-            filter_pass_loc, coding_miRNA_loc  # filter cells and genes
-        ]
 
-        X_norm = (adata_filter.X / adata.X.sum(1) * 10_000 / norm_factor_vector).tocsr()
+        for i in range(0, len(filter_pass_loc), chunk_size):
+            idx = filter_pass_loc[i:i+chunk_size]
+            X = adata[idx].X
 
-        tokenized_cells += [
-            tokenize_cell(X_norm[i, ...].A.flatten(), coding_miRNA_tokens)
-            for i in range(X_norm.shape[0])
-        ]
+            X_norm = (X / X[:, coding_miRNA_loc].sum(axis=1) * target_sum / norm_factor_vector)
+            X_norm = sp.csr_matrix(X_norm)
 
-        # add custom attributes for subview to dict
-        for k in file_cell_metadata.keys():
-            file_cell_metadata[k] += adata_filter.obs[k].tolist()
+            tokenized_cells += [
+                rank_genes(X_norm[i].data, coding_miRNA_tokens[X_norm[i].indices])
+                for i in range(X_norm.shape[0])
+            ]
+
+            # add custom attributes for subview to dict
+            for k in file_cell_metadata.keys():
+                file_cell_metadata[k] += adata[idx].obs[k].tolist()
 
         return tokenized_cells, file_cell_metadata
 
-    def tokenize_file(self, loom_file_path):
+    def tokenize_file(self, loom_file_path, target_sum=10_000):
         if self.custom_attr_name_dict is not None:
             file_cell_metadata = {
                 attr_key: [] for attr_key in self.custom_attr_name_dict.keys()
@@ -261,7 +273,7 @@ class TranscriptomeTokenizer:
                 subview_norm_array = (
                     subview[:, :]
                     / subview.ca.n_counts
-                    * 10_000
+                    * target_sum
                     / norm_factor_vector[:, None]
                 )
                 # tokenize subview gene vectors
@@ -279,21 +291,25 @@ class TranscriptomeTokenizer:
 
         return tokenized_cells, file_cell_metadata
 
-    def create_dataset(self, tokenized_cells, cell_metadata):
+    def create_dataset(self, tokenized_cells, cell_metadata, use_generator=False):
+        print("Creating dataset...")
         # create dict for dataset creation
         dataset_dict = {"input_ids": tokenized_cells}
         if self.custom_attr_name_dict is not None:
             dataset_dict.update(cell_metadata)
 
         # create dataset
-        def dict_generator():
-            for i in range(len(tokenized_cells)):
-                yield {k: dataset_dict[k][i] for k in dataset_dict.keys()}
-        output_dataset = Dataset.from_generator(dict_generator, num_proc=self.nproc)
+        if use_generator:
+            def dict_generator():
+                for i in range(len(tokenized_cells)):
+                    yield {k: dataset_dict[k][i] for k in dataset_dict.keys()}
+            output_dataset = Dataset.from_generator(dict_generator, num_proc=self.nproc)
+        else:
+            output_dataset = Dataset.from_dict(dataset_dict)
 
         # truncate dataset
         def truncate(example):
-            example["input_ids"] = example["input_ids"][0:2048]
+            example["input_ids"] = example["input_ids"][:2048]
             return example
 
         output_dataset_truncated = output_dataset.map(truncate, num_proc=self.nproc)
