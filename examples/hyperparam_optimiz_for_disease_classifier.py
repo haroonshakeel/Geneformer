@@ -18,10 +18,42 @@ import ray
 from ray import tune
 from ray.tune import ExperimentAnalysis
 from ray.tune.suggest.hyperopt import HyperOptSearch
+ray.shutdown() #engage new ray session
 runtime_env = {"conda": "base",
                "env_vars": {"LD_LIBRARY_PATH": "/path/to/miniconda3/lib:/path/to/sw/lib:/path/to/sw/lib"}}
 ray.init(runtime_env=runtime_env)
 
+def initialize_ray_with_check(ip_address):
+    """
+    Initialize Ray with a specified IP address and check its status and accessibility.
+
+    Args:
+    - ip_address (str): The IP address (with port) to initialize Ray.
+
+    Returns:
+    - bool: True if initialization was successful and dashboard is accessible, False otherwise.
+    """
+    try:
+        ray.init(address=ip_address)
+        print(ray.nodes())
+        
+        services = ray.get_webui_url()
+        if not services:
+            raise RuntimeError("Ray dashboard is not accessible.")
+        else:
+            print(f"Ray dashboard is accessible at: {services}")
+        return True
+    except Exception as e:
+        print(f"Error initializing Ray: {e}")
+        return False
+
+# Usage:
+ip = 'your_ip:xxxx'  # Replace with your actual IP address and port
+if initialize_ray_with_check(ip):
+    print("Ray initialized successfully!")
+else:
+    print("Error during Ray initialization.")
+    
 import datetime
 import numpy as np
 import pandas as pd
@@ -30,7 +62,7 @@ import seaborn as sns; sns.set()
 from collections import Counter
 from datasets import load_from_disk
 from scipy.stats import ranksums
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, f1_score
 from transformers import BertForSequenceClassification
 from transformers import Trainer
 from transformers.training_args import TrainingArguments
