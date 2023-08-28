@@ -50,7 +50,7 @@ def initialize_ray_with_check(ip_address):
 # Usage:
 ip = 'your_ip:xxxx'  # Replace with your actual IP address and port
 if initialize_ray_with_check(ip):
-    print("Ray initialized successfully!")
+    print("Ray initialized successfully.")
 else:
     print("Error during Ray initialization.")
     
@@ -62,7 +62,7 @@ import seaborn as sns; sns.set()
 from collections import Counter
 from datasets import load_from_disk
 from scipy.stats import ranksums
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score
 from transformers import BertForSequenceClassification
 from transformers import Trainer
 from transformers.training_args import TrainingArguments
@@ -155,6 +155,7 @@ def model_init():
     return model
 
 # define metrics
+# note: macro f1 score recommended for imbalanced multiclass classifiers
 def compute_metrics(pred):
     labels = pred.label_ids
     preds = pred.predictions.argmax(-1)
