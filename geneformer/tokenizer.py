@@ -167,9 +167,11 @@ class TranscriptomeTokenizer:
 
     def tokenize_anndata(self, adata_file_path, target_sum=10_000, chunk_size=512):
         adata = ad.read(adata_file_path, backed="r")
-        file_cell_metadata = {
-            attr_key: [] for attr_key in self.custom_attr_name_dict.keys()
-        }
+
+        if self.custom_attr_name_dict is not None:
+            file_cell_metadata = {
+                attr_key: [] for attr_key in self.custom_attr_name_dict.keys()
+            }
 
         coding_miRNA_loc = np.where(
             [self.genelist_dict.get(i, False) for i in adata.var["ensembl_id"]]
@@ -208,7 +210,8 @@ class TranscriptomeTokenizer:
             idx = filter_pass_loc[i:i+chunk_size]
             X = adata[idx].X
 
-            X_norm = (X / X[:, coding_miRNA_loc].sum(axis=1) * target_sum / norm_factor_vector)
+            X_view = X[:, coding_miRNA_loc]
+            X_norm = (X_view / X_view.sum(axis=1) * target_sum / norm_factor_vector)
             X_norm = sp.csr_matrix(X_norm)
 
             tokenized_cells += [
@@ -217,8 +220,11 @@ class TranscriptomeTokenizer:
             ]
 
             # add custom attributes for subview to dict
-            for k in file_cell_metadata.keys():
-                file_cell_metadata[k] += adata[idx].obs[k].tolist()
+            if self.custom_attr_name_dict is not None:
+                for k in file_cell_metadata.keys():
+                    file_cell_metadata[k] += adata[idx].obs[k].tolist()
+            else:
+                file_cell_metadata = None
 
         return tokenized_cells, file_cell_metadata
 
