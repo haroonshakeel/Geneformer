@@ -194,11 +194,11 @@ class TranscriptomeTokenizer:
         else:
             var_exists = True
 
-        if var_exists is True:
+        if var_exists:
             filter_pass_loc = np.where(
-                [True if i == 1 else False for i in adata.obs["filter_pass"]]
+                [i == 1 for i in adata.obs["filter_pass"]]
             )[0]
-        elif var_exists is False:
+        elif not var_exists:
             print(
                 f"{adata_file_path} has no column attribute 'filter_pass'; tokenizing all cells."
             )
@@ -208,10 +208,10 @@ class TranscriptomeTokenizer:
 
         for i in range(0, len(filter_pass_loc), chunk_size):
             idx = filter_pass_loc[i:i+chunk_size]
-            X = adata[idx].X
 
-            X_view = X[:, coding_miRNA_loc]
-            X_norm = (X_view / X_view.sum(axis=1) * target_sum / norm_factor_vector)
+            X_view = adata[idx, coding_miRNA_loc].X
+            n_counts = adata[idx].obs['n_counts'].values[:, None]
+            X_norm = (X_view / n_counts * target_sum / norm_factor_vector)
             X_norm = sp.csr_matrix(X_norm)
 
             tokenized_cells += [
@@ -258,11 +258,11 @@ class TranscriptomeTokenizer:
             else:
                 var_exists = True
 
-            if var_exists is True:
+            if var_exists:
                 filter_pass_loc = np.where(
-                    [True if i == 1 else False for i in data.ca["filter_pass"]]
+                    [i == 1 for i in data.ca["filter_pass"]]
                 )[0]
-            elif var_exists is False:
+            elif not var_exists:
                 print(
                     f"{loom_file_path} has no column attribute 'filter_pass'; tokenizing all cells."
                 )
