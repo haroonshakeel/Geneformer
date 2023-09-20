@@ -146,7 +146,7 @@ class TranscriptomeTokenizer:
         file_found = 0
         # loops through directories to tokenize .loom or .h5ad files
         tokenize_file_fn = (
-            self.tokenize_file if file_format == "loom" else self.tokenize_anndata
+            self.tokenize_loom if file_format == "loom" else self.tokenize_anndata
         )
         for file_path in data_directory.glob("*.{}".format(file_format)):
             file_found = 1
@@ -209,8 +209,8 @@ class TranscriptomeTokenizer:
         for i in range(0, len(filter_pass_loc), chunk_size):
             idx = filter_pass_loc[i:i+chunk_size]
 
-            X_view = adata[idx, coding_miRNA_loc].X
             n_counts = adata[idx].obs['n_counts'].values[:, None]
+            X_view = adata[idx, coding_miRNA_loc].X
             X_norm = (X_view / n_counts * target_sum / norm_factor_vector)
             X_norm = sp.csr_matrix(X_norm)
 
@@ -228,7 +228,7 @@ class TranscriptomeTokenizer:
 
         return tokenized_cells, file_cell_metadata
 
-    def tokenize_file(self, loom_file_path, target_sum=10_000):
+    def tokenize_loom(self, loom_file_path, target_sum=10_000):
         if self.custom_attr_name_dict is not None:
             file_cell_metadata = {
                 attr_key: [] for attr_key in self.custom_attr_name_dict.keys()
@@ -298,7 +298,7 @@ class TranscriptomeTokenizer:
         return tokenized_cells, file_cell_metadata
 
     def create_dataset(self, tokenized_cells, cell_metadata, use_generator=False):
-        print("Creating dataset...")
+        print("Creating dataset.")
         # create dict for dataset creation
         dataset_dict = {"input_ids": tokenized_cells}
         if self.custom_attr_name_dict is not None:
