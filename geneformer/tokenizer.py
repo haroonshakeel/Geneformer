@@ -297,7 +297,7 @@ class TranscriptomeTokenizer:
 
         return tokenized_cells, file_cell_metadata
 
-    def create_dataset(self, tokenized_cells, cell_metadata, use_generator=False):
+    def create_dataset(self, tokenized_cells, cell_metadata, use_generator=False, keep_uncropped_input_ids=False):
         print("Creating dataset.")
         # create dict for dataset creation
         dataset_dict = {"input_ids": tokenized_cells}
@@ -312,21 +312,24 @@ class TranscriptomeTokenizer:
             output_dataset = Dataset.from_generator(dict_generator, num_proc=self.nproc)
         else:
             output_dataset = Dataset.from_dict(dataset_dict)
+            
+        def format_cell_features(example):
+            # Store original uncropped input_ids in separate feature
+            if keep_uncropped_input_ids:
+                example['input_ids_uncropped'] = example['input_ids']
+                example['length_uncropped'] = len(example['input_ids'])
 
-        # truncate dataset
-        def truncate(example):
-            example["input_ids"] = example["input_ids"][:2048]
+            # Truncate/Crop input_ids to size 2,048
+            example['input_ids'] = example['input_ids'][0:2048]
+            example['length'] = len(example['input_ids'])
+
             return example
 
-        output_dataset_truncated = output_dataset.map(truncate, num_proc=self.nproc)
-
-        # measure lengths of dataset
-        def measure_length(example):
-            example["length"] = len(example["input_ids"])
-            return example
-
-        output_dataset_truncated_w_length = output_dataset_truncated.map(
-            measure_length, num_proc=self.nproc
+        output_dataset_truncated = output_dataset.map(
+            format_cell_features,
+            num_proc=self.nproc
         )
+        return output_dataset_truncated
 
-        return output_dataset_truncated_w_length
+
+    
