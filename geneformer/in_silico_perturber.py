@@ -405,7 +405,10 @@ def quant_cos_sims(model,
             # truncate to the (model input size - # tokens to overexpress) to ensure comparability
             # since max input size of perturb batch will be reduced by # tokens to overexpress 
             original_minibatch = original_emb.select([i for i in range(i, max_range)])
-            original_outputs, orig_max_len = compute_batch_embeddings(original_minibatch, mini_max_len)
+            original_outputs, orig_max_len = compute_batch_embeddings(original_minibatch) # , mini_max_len)
+                                                                                          # to fix the bug: RuntimeError: The size of tensor a (2047) must match the size of tensor b (2046) at non-singleton dimension 1
+                                                                                          # in function compute_batch_embeddings()
+                                                                                          # _max_len must keep None, so that original samples can be padded with correct length
 
             if len(indices_to_perturb)>1:
                 original_minibatch_emb = torch.squeeze(original_outputs.hidden_states[layer_to_quant])
@@ -470,8 +473,22 @@ def quant_cos_sims(model,
             del original_minibatch_emb
         torch.cuda.empty_cache()
     if cell_states_to_model is None:
-        cos_sims_stack = torch.cat(cos_sims)
-        return cos_sims_stack
+        # cos_sims_stack = torch.cat(cos_sims)
+        # return cos_sims_stack
+        # to fix the bug: RuntimeError: Sizes of tensors must match except in dimension 0. Expected size 2047 but got size 2046 for tensor number 24 in the list.
+        # cos_sims shape is (samples/bsz,bsz,tokens)
+        # cos_sims can not be concat because the token length are not the same between batches
+        # 2 way to solve this bug: 
+        # The first one is to pad all the samples with the max length
+        # The second one is to append each sample to a list ()
+        # I choose the second way.
+        # ps, this causes another modification in function in_silico_perturb()
+        # cos_sims_list shape will be (samples,tokens)
+        cos_sims_list = []
+        for bsz_idx in range(len(cos_sims)):
+            for sample_idx in range(len(cos_sims[bsz_idx])):
+                cos_sims_list.append(cos_sims[bsz_idx][sample_idx])
+        return cos_sims_list
     else:
         for state in possible_states:
             cos_sims_vs_alt_dict[state] = torch.cat(cos_sims_vs_alt_dict[state])
@@ -1074,27 +1091,41 @@ class InSilicoPerturber:
             perturbed_genes = tuple(self.tokens_to_perturb)
             original_lengths = filtered_input_data["length"]
             if self.cell_states_to_model is None:
-                # update cos sims dict
-                # key is tuple of (perturbed_gene, affected_gene)
-                # or (perturbed_genes, "cell_emb") for avg cell emb change
-                cos_sims_data = cos_sims_data.to("cuda")
-                max_padded_len = cos_sims_data.shape[1]
-                for j in range(cos_sims_data.shape[0]):
-                    # remove padding before mean pooling cell embedding
-                    original_length = original_lengths[j]
-                    gene_list = filtered_input_data[j]["input_ids"]
-                    indices_removed = indices_to_perturb[j]
-                    padding_to_remove = max_padded_len - (original_length \
-                                                          - len(self.tokens_to_perturb) \
-                                                          - len(indices_removed))
-                    nonpadding_cos_sims_data = cos_sims_data[j][:-padding_to_remove]
-                    cell_cos_sim = torch.mean(nonpadding_cos_sims_data).item()
-                    cos_sims_dict[(perturbed_genes, "cell_emb")] += [cell_cos_sim]
+                # # update cos sims dict
+                # # key is tuple of (perturbed_gene, affected_gene)
+                # # or (perturbed_genes, "cell_emb") for avg cell emb change
+                # cos_sims_data = cos_sims_data.to("cuda")
+                # max_padded_len = cos_sims_data.shape[1]
+                # for j in range(cos_sims_data.shape[0]):
+                #     # remove padding before mean pooling cell embedding
+                #     original_length = original_lengths[j]
+                #     gene_list = filtered_input_data[j]["input_ids"]
+                #     indices_removed = indices_to_perturb[j]
+                #     padding_to_remove = max_padded_len - (original_length \
+                #                                           - len(self.tokens_to_perturb) \
+                #                                           - len(indices_removed))
+                #     nonpadding_cos_sims_data = cos_sims_data[j][:-padding_to_remove]
+                #     cell_cos_sim = torch.mean(nonpadding_cos_sims_data).item()
+                #     cos_sims_dict[(perturbed_genes, "cell_emb")] += [cell_cos_sim]
 
+                #     if self.emb_mode == "cell_and_gene":
+                #         for k in range(cos_sims_data.shape[1]):
+                #             cos_sim_value = nonpadding_cos_sims_data[k]
+                #             affected_gene = gene_list[k].item()
+                #             cos_sims_dict[(perturbed_genes, affected_gene)] += [cos_sim_value.item()]
+                # to fix the bug: RuntimeError: Sizes of tensors must match except in dimension 0. Expected size 2047 but got size 2046 for tensor number 24 in the list.
+                # cos_sims_data is a list now
+                # not all token lengths are the same
+                for sample_idx in range(len(cos_sims_data)):
+                    original_length = original_lengths[sample_idx]
+                    gene_list = filtered_input_data[sample_idx]["input_ids"]
+                    nonpadding_cos_sims_data = cos_sims_data[sample_idx][:original_length-len(self.tokens_to_perturb)]
+                    cell_cos_sim = torch.mean(torch.Tensor(nonpadding_cos_sims_data)).item()
+                    cos_sims_dict[(perturbed_genes, "cell_emb")] += [cell_cos_sim]
                     if self.emb_mode == "cell_and_gene":
-                        for k in range(cos_sims_data.shape[1]):
+                        for k in range(len(nonpadding_cos_sims_data)):
                             cos_sim_value = nonpadding_cos_sims_data[k]
-                            affected_gene = gene_list[k].item()
+                            affected_gene = gene_list[k] # .item()
                             cos_sims_dict[(perturbed_genes, affected_gene)] += [cos_sim_value.item()]
             else:
                 # update cos sims dict
