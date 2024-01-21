@@ -636,7 +636,7 @@ class InSilicoPerturber:
                             if len(self.genes_to_perturb) > 1:
                                 tokens_to_perturb = tuple(self.tokens_to_perturb)
                             else:
-                                tokens_to_perturb = self.tokens_to_perturb
+                                tokens_to_perturb = self.tokens_to_perturb[0]
 
                             # fill in the gene cosine similarities
                             try:
