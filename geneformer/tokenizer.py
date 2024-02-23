@@ -366,7 +366,7 @@ class TranscriptomeTokenizer:
                 example["length_uncropped"] = len(example["input_ids"])
 
             # Truncate/Crop input_ids to input size
-            if tk.special_token:
+            if self.special_token:
                 example["input_ids"] = example["input_ids"][0:self.input_size-2] # truncate to leave space for CLS and SEP token
                 example["input_ids"] = np.insert(example["input_ids"], 0, self.gene_token_dict.get("<cls>"))
                 example["input_ids"] = np.insert(example["input_ids"], len(example["input_ids"]), self.gene_token_dict.get("<sep>"))
