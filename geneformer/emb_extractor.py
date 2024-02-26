@@ -565,7 +565,7 @@ class EmbExtractor:
                 filtered_input_data, cell_state, self.nproc
             )
         downsampled_data = pu.downsample_and_sort(filtered_input_data, self.max_ncells)
-        model = pu.load_model(self.model_type, self.num_classes, model_directory)
+        model = pu.load_model(self.model_type, self.num_classes, model_directory, self.emb_mode)
         layer_to_quant = pu.quant_layers(model) + self.emb_layer
         embs = get_embs(
             model,
