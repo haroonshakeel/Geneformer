@@ -192,16 +192,27 @@ def get_impact_component(test_value, gaussian_mixture_model):
 
 
 # aggregate data for single perturbation in multiple cells
-def isp_aggregate_grouped_perturb(cos_sims_df, dict_list):
-    names = ["Cosine_shift"]
-    cos_sims_full_df = pd.DataFrame(columns=names)
+def isp_aggregate_grouped_perturb(cos_sims_df, dict_list, genes_perturbed):
+    names = ["Cosine_shift", "Gene"]
+    cos_sims_full_dfs = []
 
-    cos_shift_data = []
-    token = cos_sims_df["Gene"][0]
-    for dict_i in dict_list:
-        cos_shift_data += dict_i.get((token, "cell_emb"), [])
-    cos_sims_full_df["Cosine_shift"] = cos_shift_data
-    return cos_sims_full_df
+    
+    gene_ids_df = cos_sims_df.loc[np.isin(cos_sims_df["Ensembl_ID"], genes_perturbed), :]
+    tokens = gene_ids_df["Gene"]
+    symbols = gene_ids_df["Gene_name"]
+
+    for token, symbol in zip(tokens, symbols):
+        cos_shift_data = []
+        for dict_i in dict_list:
+            cos_shift_data += dict_i.get((token, "cell_emb"), [])
+
+        df = pd.DataFrame(columns=names)
+        df["Cosine_shift"] = cos_shift_data
+        df["Gene"] = symbol
+        cos_sims_full_dfs.append(df)
+        
+    
+    return pd.concat(cos_sims_full_dfs)
 
 
 def find(variable, x):
@@ -1017,8 +1028,8 @@ class InSilicoPerturberStats:
                 cos_sims_df_initial, dict_list, self.combos, self.anchor_token
             )
 
-        elif self.mode == "aggregate_data":
-            cos_sims_df = isp_aggregate_grouped_perturb(cos_sims_df_initial, dict_list)
+        elif self.mode == "aggregate_data":        
+            cos_sims_df = isp_aggregate_grouped_perturb(cos_sims_df_initial, dict_list, self.genes_perturbed)
 
         elif self.mode == "aggregate_gene_shifts":
             cos_sims_df = isp_aggregate_gene_shifts(
