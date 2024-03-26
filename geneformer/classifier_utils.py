@@ -387,6 +387,10 @@ def get_default_train_args(model, classifier, data, output_dir):
             "per_device_train_batch_size": batch_size,
             "per_device_eval_batch_size": batch_size,
         }
+    else:
+        default_training_args = {
+            "per_device_train_batch_size": batch_size,
+        }
 
     training_args = {
         "num_train_epochs": epochs,
