@@ -86,6 +86,7 @@ class Classifier:
         "no_eval": {bool},
         "stratify_splits_col": {None, str},
         "forward_batch_size": {int},
+        "token_dictionary_file": {None, str},
         "nproc": {int},
         "ngpu": {int},
     }
@@ -107,6 +108,7 @@ class Classifier:
         stratify_splits_col=None,
         no_eval=False,
         forward_batch_size=100,
+        token_dictionary_file=None,
         nproc=4,
         ngpu=1,
     ):
@@ -175,6 +177,9 @@ class Classifier:
             | Otherwise, will perform eval during training.
         forward_batch_size : int
             | Batch size for forward pass (for evaluation, not training).
+        token_dictionary_file : None, str
+            | Default is to use token dictionary file from Geneformer
+            | Otherwise, will load custom gene token dictionary.
         nproc : int
             | Number of CPU processes to use.
         ngpu : int
@@ -201,9 +206,10 @@ class Classifier:
         self.stratify_splits_col = stratify_splits_col
         self.no_eval = no_eval
         self.forward_batch_size = forward_batch_size
+        self.token_dictionary_file = token_dictionary_file
         self.nproc = nproc
         self.ngpu = ngpu
-
+        
         if self.training_args is None:
             logger.warning(
                 "Hyperparameter tuning is highly recommended for optimal results. "
@@ -222,7 +228,10 @@ class Classifier:
                 ] = self.cell_state_dict["states"]
 
         # load token dictionary (Ensembl IDs:token)
-        with open(TOKEN_DICTIONARY_FILE, "rb") as f:
+        if self.token_dictionary_file is None:
+            self.token_dictionary_file = TOKEN_DICTIONARY_FILE
+            
+        with open(self.token_dictionary_file, "rb") as f:
             self.gene_token_dict = pickle.load(f)
 
         self.token_gene_dict = {v: k for k, v in self.gene_token_dict.items()}
@@ -267,7 +276,7 @@ class Classifier:
                     continue
             valid_type = False
             for option in valid_options:
-                if (option in [int, float, list, dict, bool]) and isinstance(
+                if (option in [int, float, list, dict, bool, str]) and isinstance(
                     attr_value, option
                 ):
                     valid_type = True
@@ -1018,6 +1027,7 @@ class Classifier:
                 metric="eval_macro_f1",
                 metric_columns=["loss", "eval_loss", "eval_accuracy", "eval_macro_f1"],
             ),
+            local_dir = f"{output_directory}/ray_results", # HAN ADDED 
         )
 
         return trainer
