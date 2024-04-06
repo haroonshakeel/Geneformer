@@ -53,7 +53,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from sklearn.model_selection import StratifiedKFold
 from tqdm.auto import tqdm, trange
 from transformers import Trainer
 from transformers.training_args import TrainingArguments
@@ -86,6 +85,7 @@ class Classifier:
         "no_eval": {bool},
         "stratify_splits_col": {None, str},
         "forward_batch_size": {int},
+        "token_dictionary_file": {None, str},
         "nproc": {int},
         "ngpu": {int},
     }
@@ -107,6 +107,7 @@ class Classifier:
         stratify_splits_col=None,
         no_eval=False,
         forward_batch_size=100,
+        token_dictionary_file=None,
         nproc=4,
         ngpu=1,
     ):
@@ -175,6 +176,9 @@ class Classifier:
             | Otherwise, will perform eval during training.
         forward_batch_size : int
             | Batch size for forward pass (for evaluation, not training).
+        token_dictionary_file : None, str
+            | Default is to use token dictionary file from Geneformer
+            | Otherwise, will load custom gene token dictionary.
         nproc : int
             | Number of CPU processes to use.
         ngpu : int
@@ -183,6 +187,10 @@ class Classifier:
         """
 
         self.classifier = classifier
+        if self.classifier == "cell":
+            self.model_type = "CellClassifier"
+        elif self.classifier == "gene":
+            self.model_type = "GeneClassifier"
         self.cell_state_dict = cell_state_dict
         self.gene_class_dict = gene_class_dict
         self.filter_data = filter_data
@@ -201,6 +209,7 @@ class Classifier:
         self.stratify_splits_col = stratify_splits_col
         self.no_eval = no_eval
         self.forward_batch_size = forward_batch_size
+        self.token_dictionary_file = token_dictionary_file
         self.nproc = nproc
         self.ngpu = ngpu
 
@@ -222,7 +231,9 @@ class Classifier:
                 ] = self.cell_state_dict["states"]
 
         # load token dictionary (Ensembl IDs:token)
-        with open(TOKEN_DICTIONARY_FILE, "rb") as f:
+        if self.token_dictionary_file is None:
+            self.token_dictionary_file = TOKEN_DICTIONARY_FILE
+        with open(token_dictionary_file, "rb") as f:
             self.gene_token_dict = pickle.load(f)
 
         self.token_gene_dict = {v: k for k, v in self.gene_token_dict.items()}
@@ -267,7 +278,7 @@ class Classifier:
                     continue
             valid_type = False
             for option in valid_options:
-                if (option in [int, float, list, dict, bool]) and isinstance(
+                if (option in [int, float, list, dict, bool, str]) and isinstance(
                     attr_value, option
                 ):
                     valid_type = True
@@ -630,7 +641,6 @@ class Classifier:
             | Number of trials to run for hyperparameter optimization
             | If 0, will not optimize hyperparameters
         """
-
         if self.num_crossval_splits == 0:
             logger.error("num_crossval_splits must be 1 or 5 to validate.")
             raise
@@ -772,17 +782,20 @@ class Classifier:
                 ]
             )
             assert len(targets) == len(labels)
-            n_splits = int(1 / self.eval_size)
-            skf = StratifiedKFold(n_splits=n_splits, random_state=0, shuffle=True)
+            n_splits = int(1 / (1 - self.train_size))
+            skf = cu.StratifiedKFold3(n_splits=n_splits, random_state=0, shuffle=True)
             # (Cross-)validate
-            for train_index, eval_index in tqdm(skf.split(targets, labels)):
+            test_ratio = self.oos_test_size / (self.eval_size + self.oos_test_size)
+            for train_index, eval_index, test_index in tqdm(
+                skf.split(targets, labels, test_ratio)
+            ):
                 print(
                     f"****** Validation split: {iteration_num}/{self.num_crossval_splits} ******\n"
                 )
                 ksplit_output_dir = os.path.join(output_dir, f"ksplit{iteration_num}")
                 # filter data for examples containing classes for this split
                 # subsample to max_ncells and relabel data in column "labels"
-                train_data, eval_data = cu.prep_gene_classifier_split(
+                train_data, eval_data = cu.prep_gene_classifier_train_eval_split(
                     data,
                     targets,
                     labels,
@@ -793,6 +806,18 @@ class Classifier:
                     self.nproc,
                 )
 
+                if self.oos_test_size > 0:
+                    test_data = cu.prep_gene_classifier_split(
+                        data,
+                        targets,
+                        labels,
+                        test_index,
+                        "test",
+                        self.max_ncells,
+                        iteration_num,
+                        self.nproc,
+                    )
+
                 if n_hyperopt_trials == 0:
                     trainer = self.train_classifier(
                         model_directory,
@@ -801,6 +826,15 @@ class Classifier:
                         eval_data,
                         ksplit_output_dir,
                         predict_trainer,
+                    )
+                    result = self.evaluate_model(
+                        trainer.model,
+                        num_classes,
+                        id_class_dict,
+                        eval_data,
+                        predict_eval,
+                        ksplit_output_dir,
+                        output_prefix,
                     )
                 else:
                     trainer = self.hyperopt_classifier(
@@ -811,20 +845,27 @@ class Classifier:
                         ksplit_output_dir,
                         n_trials=n_hyperopt_trials,
                     )
-                    if iteration_num == self.num_crossval_splits:
-                        return
+
+                    model = cu.load_best_model(
+                        ksplit_output_dir, self.model_type, num_classes
+                    )
+
+                    if self.oos_test_size > 0:
+                        result = self.evaluate_model(
+                            model,
+                            num_classes,
+                            id_class_dict,
+                            test_data,
+                            predict_eval,
+                            ksplit_output_dir,
+                            output_prefix,
+                        )
                     else:
-                        iteration_num = iteration_num + 1
-                        continue
-                result = self.evaluate_model(
-                    trainer.model,
-                    num_classes,
-                    id_class_dict,
-                    eval_data,
-                    predict_eval,
-                    ksplit_output_dir,
-                    output_prefix,
-                )
+                        if iteration_num == self.num_crossval_splits:
+                            return
+                        else:
+                            iteration_num = iteration_num + 1
+                            continue
                 results += [result]
                 all_conf_mat = all_conf_mat + result["conf_mat"]
                 # break after 1 or 5 splits, each with train/eval proportions dictated by eval_size
@@ -925,12 +966,7 @@ class Classifier:
         subprocess.call(f"mkdir {output_directory}", shell=True)
 
         ##### Load model and training args #####
-        if self.classifier == "cell":
-            model_type = "CellClassifier"
-        elif self.classifier == "gene":
-            model_type = "GeneClassifier"
-
-        model = pu.load_model(model_type, num_classes, model_directory, "train")
+        model = pu.load_model(self.model_type, num_classes, model_directory, "train")
         def_training_args, def_freeze_layers = cu.get_default_train_args(
             model, self.classifier, train_data, output_directory
         )
@@ -946,6 +982,9 @@ class Classifier:
         if eval_data is None:
             def_training_args["evaluation_strategy"] = "no"
             def_training_args["load_best_model_at_end"] = False
+        def_training_args.update(
+            {"save_strategy": "epoch", "save_total_limit": 1}
+        )  # only save last model for each run
         training_args_init = TrainingArguments(**def_training_args)
 
         ##### Fine-tune the model #####
@@ -957,7 +996,9 @@ class Classifier:
 
         # define function to initiate model
         def model_init():
-            model = pu.load_model(model_type, num_classes, model_directory, "train")
+            model = pu.load_model(
+                self.model_type, num_classes, model_directory, "train"
+            )
 
             if self.freeze_layers is not None:
                 def_freeze_layers = self.freeze_layers
@@ -1018,6 +1059,7 @@ class Classifier:
                 metric="eval_macro_f1",
                 metric_columns=["loss", "eval_loss", "eval_accuracy", "eval_macro_f1"],
             ),
+            local_dir=output_directory,
         )
 
         return trainer
@@ -1080,11 +1122,7 @@ class Classifier:
         subprocess.call(f"mkdir {output_directory}", shell=True)
 
         ##### Load model and training args #####
-        if self.classifier == "cell":
-            model_type = "CellClassifier"
-        elif self.classifier == "gene":
-            model_type = "GeneClassifier"
-        model = pu.load_model(model_type, num_classes, model_directory, "train")
+        model = pu.load_model(self.model_type, num_classes, model_directory, "train")
 
         def_training_args, def_freeze_layers = cu.get_default_train_args(
             model, self.classifier, train_data, output_directory
@@ -1238,11 +1276,7 @@ class Classifier:
         test_data = pu.load_and_filter(None, self.nproc, test_data_file)
 
         # load previously fine-tuned model
-        if self.classifier == "cell":
-            model_type = "CellClassifier"
-        elif self.classifier == "gene":
-            model_type = "GeneClassifier"
-        model = pu.load_model(model_type, num_classes, model_directory, "eval")
+        model = pu.load_model(self.model_type, num_classes, model_directory, "eval")
 
         # evaluate the model
         result = self.evaluate_model(
