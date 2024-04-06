@@ -1,4 +1,6 @@
+import json
 import logging
+import os
 import random
 from collections import Counter, defaultdict
 
@@ -6,6 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import chisquare, ranksums
 from sklearn.metrics import accuracy_score, f1_score
+from sklearn.model_selection import StratifiedKFold, train_test_split
 
 from . import perturber_utils as pu
 
@@ -133,61 +136,55 @@ def label_gene_classes(example, class_id_dict, gene_class_dict):
     ]
 
 
-def prep_gene_classifier_split(
+def prep_gene_classifier_train_eval_split(
     data, targets, labels, train_index, eval_index, max_ncells, iteration_num, num_proc
+):
+    # generate cross-validation splits
+    train_data = prep_gene_classifier_split(
+        data, targets, labels, train_index, "train", max_ncells, iteration_num, num_proc
+    )
+    eval_data = prep_gene_classifier_split(
+        data, targets, labels, eval_index, "eval", max_ncells, iteration_num, num_proc
+    )
+    return train_data, eval_data
+
+
+def prep_gene_classifier_split(
+    data, targets, labels, index, subset_name, max_ncells, iteration_num, num_proc
 ):
     # generate cross-validation splits
     targets = np.array(targets)
     labels = np.array(labels)
-    targets_train, targets_eval = targets[train_index], targets[eval_index]
-    labels_train, labels_eval = labels[train_index], labels[eval_index]
-    label_dict_train = dict(zip(targets_train, labels_train))
-    label_dict_eval = dict(zip(targets_eval, labels_eval))
+    targets_subset = targets[index]
+    labels_subset = labels[index]
+    label_dict_subset = dict(zip(targets_subset, labels_subset))
 
     # function to filter by whether contains train or eval labels
-    def if_contains_train_label(example):
-        a = targets_train
-        b = example["input_ids"]
-        return not set(a).isdisjoint(b)
-
-    def if_contains_eval_label(example):
-        a = targets_eval
+    def if_contains_subset_label(example):
+        a = targets_subset
         b = example["input_ids"]
         return not set(a).isdisjoint(b)
 
     # filter dataset for examples containing classes for this split
-    logger.info(f"Filtering training data for genes in split {iteration_num}")
-    train_data = data.filter(if_contains_train_label, num_proc=num_proc)
+    logger.info(f"Filtering data for {subset_name} genes in split {iteration_num}")
+    subset_data = data.filter(if_contains_subset_label, num_proc=num_proc)
     logger.info(
-        f"Filtered {round((1-len(train_data)/len(data))*100)}%; {len(train_data)} remain\n"
-    )
-    logger.info(f"Filtering evalation data for genes in split {iteration_num}")
-    eval_data = data.filter(if_contains_eval_label, num_proc=num_proc)
-    logger.info(
-        f"Filtered {round((1-len(eval_data)/len(data))*100)}%; {len(eval_data)} remain\n"
+        f"Filtered {round((1-len(subset_data)/len(data))*100)}%; {len(subset_data)} remain\n"
     )
 
     # subsample to max_ncells
-    train_data = downsample_and_shuffle(train_data, max_ncells, None, None)
-    eval_data = downsample_and_shuffle(eval_data, max_ncells, None, None)
+    subset_data = downsample_and_shuffle(subset_data, max_ncells, None, None)
 
     # relabel genes for this split
-    def train_classes_to_ids(example):
+    def subset_classes_to_ids(example):
         example["labels"] = [
-            label_dict_train.get(token_id, -100) for token_id in example["input_ids"]
+            label_dict_subset.get(token_id, -100) for token_id in example["input_ids"]
         ]
         return example
 
-    def eval_classes_to_ids(example):
-        example["labels"] = [
-            label_dict_eval.get(token_id, -100) for token_id in example["input_ids"]
-        ]
-        return example
+    subset_data = subset_data.map(subset_classes_to_ids, num_proc=num_proc)
 
-    train_data = train_data.map(train_classes_to_ids, num_proc=num_proc)
-    eval_data = eval_data.map(eval_classes_to_ids, num_proc=num_proc)
-
-    return train_data, eval_data
+    return subset_data
 
 
 def prep_gene_classifier_all_data(data, targets, labels, max_ncells, num_proc):
@@ -423,3 +420,45 @@ def get_default_train_args(model, classifier, data, output_dir):
     training_args.update(default_training_args)
 
     return training_args, freeze_layers
+
+
+def load_best_model(directory, model_type, num_classes, mode="eval"):
+    file_dict = dict()
+    for subdir, dirs, files in os.walk(directory):
+        for file in files:
+            if file.endswith("result.json"):
+                with open(f"{subdir}/{file}", "rb") as fp:
+                    result_json = json.load(fp)
+                file_dict[f"{subdir}"] = result_json["eval_macro_f1"]
+    file_df = pd.DataFrame(
+        {"dir": file_dict.keys(), "eval_macro_f1": file_dict.values()}
+    )
+    model_superdir = (
+        "run-"
+        + file_df.iloc[file_df["eval_macro_f1"].idxmax()]["dir"]
+        .split("_objective_")[2]
+        .split("_")[0]
+    )
+
+    for subdir, dirs, files in os.walk(f"{directory}/{model_superdir}"):
+        for file in files:
+            if file.endswith("model.safetensors"):
+                model = pu.load_model(model_type, num_classes, f"{subdir}", mode)
+    return model
+
+
+class StratifiedKFold3(StratifiedKFold):
+    def split(self, targets, labels, test_ratio=0.5, groups=None):
+        s = super().split(targets, labels, groups)
+        for train_indxs, test_indxs in s:
+            if test_ratio == 0:
+                yield train_indxs, test_indxs, None
+            else:
+                labels_test = np.array(labels)[test_indxs]
+                valid_indxs, test_indxs = train_test_split(
+                    test_indxs,
+                    stratify=labels_test,
+                    test_size=test_ratio,
+                    random_state=0,
+                )
+                yield train_indxs, valid_indxs, test_indxs
