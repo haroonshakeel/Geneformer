@@ -445,8 +445,8 @@ class Classifier:
             test_data_output_path = (
                 Path(output_directory) / f"{output_prefix}_labeled_test"
             ).with_suffix(".dataset")
-            data_dict["train"].save_to_disk(train_data_output_path)
-            data_dict["test"].save_to_disk(test_data_output_path)
+            data_dict["train"].save_to_disk(str(train_data_output_path))
+            data_dict["test"].save_to_disk(str(test_data_output_path))
         elif (test_size is not None) and (self.classifier == "cell"):
             if 1 > test_size > 0:
                 if attr_to_split is None:
@@ -461,8 +461,8 @@ class Classifier:
                     test_data_output_path = (
                         Path(output_directory) / f"{output_prefix}_labeled_test"
                     ).with_suffix(".dataset")
-                    data_dict["train"].save_to_disk(train_data_output_path)
-                    data_dict["test"].save_to_disk(test_data_output_path)
+                    data_dict["train"].save_to_disk(str(train_data_output_path))
+                    data_dict["test"].save_to_disk(str(test_data_output_path))
                 else:
                     data_dict, balance_df = cu.balance_attr_splits(
                         data,
@@ -483,19 +483,19 @@ class Classifier:
                     test_data_output_path = (
                         Path(output_directory) / f"{output_prefix}_labeled_test"
                     ).with_suffix(".dataset")
-                    data_dict["train"].save_to_disk(train_data_output_path)
-                    data_dict["test"].save_to_disk(test_data_output_path)
+                    data_dict["train"].save_to_disk(str(train_data_output_path))
+                    data_dict["test"].save_to_disk(str(test_data_output_path))
             else:
                 data_output_path = (
                     Path(output_directory) / f"{output_prefix}_labeled"
                 ).with_suffix(".dataset")
-                data.save_to_disk(data_output_path)
+                data.save_to_disk(str(data_output_path))
                 print(data_output_path)
         else:
             data_output_path = (
                 Path(output_directory) / f"{output_prefix}_labeled"
             ).with_suffix(".dataset")
-            data.save_to_disk(data_output_path)
+            data.save_to_disk(str(data_output_path))
 
     def train_all_data(
         self,
