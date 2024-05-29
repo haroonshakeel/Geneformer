@@ -39,6 +39,7 @@ import os
 import pickle
 from collections import defaultdict
 from typing import List
+from multiprocess import set_start_method
 
 import seaborn as sns
 import torch
@@ -47,7 +48,8 @@ from tqdm.auto import trange
 
 from . import perturber_utils as pu
 from .emb_extractor import get_embs
-from .tokenizer import TOKEN_DICTIONARY_FILE
+from .perturber_utils import TOKEN_DICTIONARY_FILE
+
 
 sns.set()
 
@@ -185,6 +187,10 @@ class InSilicoPerturber:
         token_dictionary_file : Path
             | Path to pickle file containing token dictionary (Ensembl ID:token).
         """
+        try:
+            set_start_method("spawn")
+        except RuntimeError:
+            pass
 
         self.perturb_type = perturb_type
         self.perturb_rank_shift = perturb_rank_shift
@@ -422,6 +428,7 @@ class InSilicoPerturber:
         self.max_len = pu.get_model_input_size(model)
         layer_to_quant = pu.quant_layers(model) + self.emb_layer
 
+
         ### filter input data ###
         # general filtering of input data based on filter_data argument
         filtered_input_data = pu.load_and_filter(
@@ -520,6 +527,7 @@ class InSilicoPerturber:
         perturbed_data = filtered_input_data.map(
             make_group_perturbation_batch, num_proc=self.nproc
         )
+    
         if self.perturb_type == "overexpress":
             filtered_input_data = filtered_input_data.add_column(
                 "n_overflow", perturbed_data["n_overflow"]

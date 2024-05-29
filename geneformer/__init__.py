@@ -11,7 +11,7 @@ from .collator_for_classification import (
     DataCollatorForCellClassification,
     DataCollatorForGeneClassification,
 )
-from .emb_extractor import EmbExtractor
+from .emb_extractor import EmbExtractor, get_embs
 from .in_silico_perturber import InSilicoPerturber
 from .in_silico_perturber_stats import InSilicoPerturberStats
 from .pretrainer import GeneformerPretrainer

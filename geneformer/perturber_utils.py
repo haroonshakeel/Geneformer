@@ -4,6 +4,8 @@ import pickle
 import re
 from collections import defaultdict
 from typing import List
+from pathlib import Path
+
 
 import numpy as np
 import pandas as pd
@@ -15,6 +17,11 @@ from transformers import (
     BertForSequenceClassification,
     BertForTokenClassification,
 )
+
+GENE_MEDIAN_FILE = Path(__file__).parent / "gene_median_dictionary.pkl"
+TOKEN_DICTIONARY_FILE = Path(__file__).parent / "token_dictionary.pkl"
+ENSEMBL_DICTIONARY_FILE = Path(__file__).parent / "gene_name_id_dict.pkl"
+
 
 sns.set()
 
@@ -581,9 +588,11 @@ def quant_cos_sims(
     elif emb_mode == "cell":
         cos = torch.nn.CosineSimilarity(dim=1)
 
-    if cell_states_to_model is None:
+    # if emb_mode == "gene", can only calculate gene cos sims
+    # against original cell anyways
+    if cell_states_to_model is None or emb_mode == "gene":
         cos_sims = cos(perturbation_emb, original_emb).to("cuda")
-    else:
+    elif cell_states_to_model is not None and emb_mode == "cell":
         possible_states = get_possible_states(cell_states_to_model)
         cos_sims = dict(zip(possible_states, [[] for _ in range(len(possible_states))]))
         for state in possible_states:
@@ -705,3 +714,48 @@ def validate_cell_states_to_model(cell_states_to_model):
                 "'alt_states': ['hcm', 'other1', 'other2']}"
             )
             raise
+
+class GeneIdHandler:
+    def __init__(self, raise_errors=False):
+        def invert_dict(dict_obj):
+            return {v:k for k,v in dict_obj.items()}
+        
+        self.raise_errors = raise_errors
+        
+        with open(TOKEN_DICTIONARY_FILE, 'rb') as f:
+            self.gene_token_dict = pickle.load(f)
+            self.token_gene_dict = invert_dict(self.gene_token_dict)
+
+        with open(ENSEMBL_DICTIONARY_FILE, 'rb') as f:
+            self.id_gene_dict = pickle.load(f)
+            self.gene_id_dict = invert_dict(self.id_gene_dict)
+            
+    def ens_to_token(self, ens_id):
+        if not self.raise_errors:
+            return self.gene_token_dict.get(ens_id, ens_id)
+        else:
+            return self.gene_token_dict[ens_id]
+    
+    def token_to_ens(self, token):
+        if not self.raise_errors:
+            return self.token_gene_dict.get(token, token)
+        else:
+            return self.token_gene_dict[token]
+
+    def ens_to_symbol(self, ens_id):
+        if not self.raise_errors:
+            return self.gene_id_dict.get(ens_id, ens_id)
+        else:
+            return self.gene_id_dict[ens_id]
+    
+    def symbol_to_ens(self, symbol):
+        if not self.raise_errors:
+            return self.id_gene_dict.get(symbol, symbol)
+        else:
+            return self.id_gene_dict[symbol]
+    
+    def token_to_symbol(self, token):
+        return self.ens_to_symbol(self.token_to_ens(token))
+    
+    def symbol_to_token(self, symbol):
+        return self.ens_to_token(self.symbol_to_ens(symbol))
