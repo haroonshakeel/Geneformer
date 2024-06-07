@@ -175,7 +175,7 @@ class TranscriptomeTokenizer:
         )
 
         output_path = (Path(output_directory) / output_prefix).with_suffix(".dataset")
-        tokenized_dataset.save_to_disk(output_path)
+        tokenized_dataset.save_to_disk(str(output_path))
 
     def tokenize_files(
         self, data_directory, file_format: Literal["loom", "h5ad"] = "loom"
