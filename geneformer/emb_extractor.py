@@ -270,7 +270,9 @@ def plot_umap(embs_df, emb_dims, label, output_file, kwargs_dict):
     if kwargs_dict is not None:
         default_kwargs_dict.update(kwargs_dict)
 
-    sc.pl.umap(adata, color=label, save=output_file, **default_kwargs_dict)
+    with plt.rc_context(): 
+        sc.pl.umap(adata, color=label, **default_kwargs_dict)
+        plt.savefig(output_file, bbox_inches="tight")
 
 
 def gen_heatmap_class_colors(labels, df):
@@ -783,7 +785,7 @@ class EmbExtractor:
                 output_file = (
                     Path(output_directory) / output_prefix_label
                 ).with_suffix(".pdf")
-                plot_umap(embs, emb_dims, label, output_prefix_label, kwargs_dict)
+                plot_umap(embs, emb_dims, label, output_file, kwargs_dict)
 
         if plot_style == "heatmap":
             for label in self.labels_to_plot:
