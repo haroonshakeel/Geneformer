@@ -4,8 +4,6 @@ import pickle
 import re
 from collections import defaultdict
 from typing import List
-from pathlib import Path
-
 
 import numpy as np
 import pandas as pd
@@ -17,11 +15,6 @@ from transformers import (
     BertForSequenceClassification,
     BertForTokenClassification,
 )
-
-GENE_MEDIAN_FILE = Path(__file__).parent / "gene_median_dictionary.pkl"
-TOKEN_DICTIONARY_FILE = Path(__file__).parent / "token_dictionary.pkl"
-ENSEMBL_DICTIONARY_FILE = Path(__file__).parent / "gene_name_id_dict.pkl"
-
 
 sns.set()
 
@@ -218,26 +211,35 @@ def delete_indices(example):
 
 
 # for genes_to_perturb = "all" where only genes within cell are overexpressed
-def overexpress_indices(example):
+def overexpress_indices(example, special_token):
     indices = example["perturb_index"]
     if any(isinstance(el, list) for el in indices):
         indices = flatten_list(indices)
     for index in sorted(indices, reverse=True):
-        example["input_ids"].insert(0, example["input_ids"].pop(index))
+        if special_token:
+            example["input_ids"].insert(1, example["input_ids"].pop(index))
+        else:
+            example["input_ids"].insert(0, example["input_ids"].pop(index))
 
     example["length"] = len(example["input_ids"])
     return example
 
 
 # for genes_to_perturb = list of genes to overexpress that are not necessarily expressed in cell
-def overexpress_tokens(example, max_len):
+def overexpress_tokens(example, max_len, special_token):
     # -100 indicates tokens to overexpress are not present in rank value encoding
     if example["perturb_index"] != [-100]:
         example = delete_indices(example)
-    [
-        example["input_ids"].insert(0, token)
-        for token in example["tokens_to_perturb"][::-1]
-    ]
+    if special_token:
+        [
+            example["input_ids"].insert(1, token)
+            for token in example["tokens_to_perturb"][::-1]
+        ]
+    else:
+        [
+            example["input_ids"].insert(0, token)
+            for token in example["tokens_to_perturb"][::-1]
+        ]
 
     # truncate to max input size, must also truncate original emb to be comparable
     if len(example["input_ids"]) > max_len:
@@ -588,11 +590,9 @@ def quant_cos_sims(
     elif emb_mode == "cell":
         cos = torch.nn.CosineSimilarity(dim=1)
 
-    # if emb_mode == "gene", can only calculate gene cos sims
-    # against original cell anyways
-    if cell_states_to_model is None or emb_mode == "gene":
+    if cell_states_to_model is None:
         cos_sims = cos(perturbation_emb, original_emb).to("cuda")
-    elif cell_states_to_model is not None and emb_mode == "cell":
+    else:
         possible_states = get_possible_states(cell_states_to_model)
         cos_sims = dict(zip(possible_states, [[] for _ in range(len(possible_states))]))
         for state in possible_states:
@@ -714,48 +714,3 @@ def validate_cell_states_to_model(cell_states_to_model):
                 "'alt_states': ['hcm', 'other1', 'other2']}"
             )
             raise
-
-class GeneIdHandler:
-    def __init__(self, raise_errors=False):
-        def invert_dict(dict_obj):
-            return {v:k for k,v in dict_obj.items()}
-        
-        self.raise_errors = raise_errors
-        
-        with open(TOKEN_DICTIONARY_FILE, 'rb') as f:
-            self.gene_token_dict = pickle.load(f)
-            self.token_gene_dict = invert_dict(self.gene_token_dict)
-
-        with open(ENSEMBL_DICTIONARY_FILE, 'rb') as f:
-            self.id_gene_dict = pickle.load(f)
-            self.gene_id_dict = invert_dict(self.id_gene_dict)
-            
-    def ens_to_token(self, ens_id):
-        if not self.raise_errors:
-            return self.gene_token_dict.get(ens_id, ens_id)
-        else:
-            return self.gene_token_dict[ens_id]
-    
-    def token_to_ens(self, token):
-        if not self.raise_errors:
-            return self.token_gene_dict.get(token, token)
-        else:
-            return self.token_gene_dict[token]
-
-    def ens_to_symbol(self, ens_id):
-        if not self.raise_errors:
-            return self.gene_id_dict.get(ens_id, ens_id)
-        else:
-            return self.gene_id_dict[ens_id]
-    
-    def symbol_to_ens(self, symbol):
-        if not self.raise_errors:
-            return self.id_gene_dict.get(symbol, symbol)
-        else:
-            return self.id_gene_dict[symbol]
-    
-    def token_to_symbol(self, token):
-        return self.ens_to_symbol(self.token_to_ens(token))
-    
-    def symbol_to_token(self, symbol):
-        return self.ens_to_token(self.symbol_to_ens(symbol))
