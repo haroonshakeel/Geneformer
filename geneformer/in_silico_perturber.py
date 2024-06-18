@@ -50,7 +50,6 @@ from . import perturber_utils as pu
 from .emb_extractor import get_embs
 from .perturber_utils import TOKEN_DICTIONARY_FILE
 
-
 sns.set()
 
 
@@ -74,6 +73,7 @@ class InSilicoPerturber:
         "max_ncells": {None, int},
         "cell_inds_to_perturb": {"all", dict},
         "emb_layer": {-1, 0},
+        "token_dictionary_file" : {None, str},
         "forward_batch_size": {int},
         "nproc": {int},
     }
@@ -95,9 +95,10 @@ class InSilicoPerturber:
         max_ncells=None,
         cell_inds_to_perturb="all",
         emb_layer=-1,
+        token_dictionary_file=None,
         forward_batch_size=100,
         nproc=4,
-        token_dictionary_file=TOKEN_DICTIONARY_FILE,
+        
     ):
         """
         Initialize in silico perturber.
@@ -187,10 +188,6 @@ class InSilicoPerturber:
         token_dictionary_file : Path
             | Path to pickle file containing token dictionary (Ensembl ID:token).
         """
-        try:
-            set_start_method("spawn")
-        except RuntimeError:
-            pass
 
         self.perturb_type = perturb_type
         self.perturb_rank_shift = perturb_rank_shift
@@ -220,16 +217,28 @@ class InSilicoPerturber:
         self.max_ncells = max_ncells
         self.cell_inds_to_perturb = cell_inds_to_perturb
         self.emb_layer = emb_layer
+        self.token_dictionary_file = token_dictionary_file
         self.forward_batch_size = forward_batch_size
         self.nproc = nproc
 
         self.validate_options()
 
         # load token dictionary (Ensembl IDs:token)
+        if self.token_dictionary_file is None:
+            token_dictionary_file = TOKEN_DICTIONARY_FILE
         with open(token_dictionary_file, "rb") as f:
             self.gene_token_dict = pickle.load(f)
+        self.token_gene_dict = {v: k for k, v in self.gene_token_dict.items()}
 
         self.pad_token_id = self.gene_token_dict.get("<pad>")
+
+
+        # Identify if special token is present in the token dictionary
+        lowercase_token_gene_dict = {k: v.lower() for k, v in self.token_gene_dict.items()}
+        cls_present = any("cls" in value for value in lowercase_token_gene_dict.values())
+        sep_present = any("sep" in value for value in lowercase_token_gene_dict.values())
+        if cls_present or sep_present:
+            self.special_token = True
 
         if self.anchor_gene is None:
             self.anchor_token = None
@@ -287,7 +296,7 @@ class InSilicoPerturber:
                         continue
             valid_type = False
             for option in valid_options:
-                if (option in [bool, int, list, dict]) and isinstance(
+                if (option in [bool, int, list, dict, str]) and isinstance(
                     attr_value, option
                 ):
                     valid_type = True
@@ -428,7 +437,6 @@ class InSilicoPerturber:
         self.max_len = pu.get_model_input_size(model)
         layer_to_quant = pu.quant_layers(model) + self.emb_layer
 
-
         ### filter input data ###
         # general filtering of input data based on filter_data argument
         filtered_input_data = pu.load_and_filter(
@@ -506,7 +514,7 @@ class InSilicoPerturber:
             if self.perturb_type == "delete":
                 example = pu.delete_indices(example)
             elif self.perturb_type == "overexpress":
-                example = pu.overexpress_tokens(example, self.max_len)
+                example = pu.overexpress_tokens(example, self.max_len, self.special_token)
                 example["n_overflow"] = pu.calc_n_overflow(
                     self.max_len,
                     example["length"],
@@ -527,7 +535,6 @@ class InSilicoPerturber:
         perturbed_data = filtered_input_data.map(
             make_group_perturbation_batch, num_proc=self.nproc
         )
-    
         if self.perturb_type == "overexpress":
             filtered_input_data = filtered_input_data.add_column(
                 "n_overflow", perturbed_data["n_overflow"]
@@ -560,6 +567,7 @@ class InSilicoPerturber:
                     layer_to_quant,
                     self.pad_token_id,
                     self.forward_batch_size,
+                    self.token_gene_dict,
                     summary_stat=None,
                     silent=True,
                 )
@@ -579,6 +587,7 @@ class InSilicoPerturber:
                     layer_to_quant,
                     self.pad_token_id,
                     self.forward_batch_size,
+                    self.token_gene_dict,
                     summary_stat=None,
                     silent=True,
                 )
@@ -738,6 +747,7 @@ class InSilicoPerturber:
                 layer_to_quant,
                 self.pad_token_id,
                 self.forward_batch_size,
+                self.token_gene_dict,
                 summary_stat=None,
                 silent=True,
             )
@@ -765,6 +775,7 @@ class InSilicoPerturber:
                 layer_to_quant,
                 self.pad_token_id,
                 self.forward_batch_size,
+                self.token_gene_dict,
                 summary_stat=None,
                 silent=True,
             )
