@@ -218,26 +218,35 @@ def delete_indices(example):
 
 
 # for genes_to_perturb = "all" where only genes within cell are overexpressed
-def overexpress_indices(example):
+def overexpress_indices(example, special_token):
     indices = example["perturb_index"]
     if any(isinstance(el, list) for el in indices):
         indices = flatten_list(indices)
     for index in sorted(indices, reverse=True):
-        example["input_ids"].insert(0, example["input_ids"].pop(index))
+        if special_token:
+            example["input_ids"].insert(1, example["input_ids"].pop(index))
+        else:
+            example["input_ids"].insert(0, example["input_ids"].pop(index))
 
     example["length"] = len(example["input_ids"])
     return example
 
 
 # for genes_to_perturb = list of genes to overexpress that are not necessarily expressed in cell
-def overexpress_tokens(example, max_len):
+def overexpress_tokens(example, max_len, special_token):
     # -100 indicates tokens to overexpress are not present in rank value encoding
     if example["perturb_index"] != [-100]:
         example = delete_indices(example)
-    [
-        example["input_ids"].insert(0, token)
-        for token in example["tokens_to_perturb"][::-1]
-    ]
+    if special_token:
+        [
+            example["input_ids"].insert(1, token)
+            for token in example["tokens_to_perturb"][::-1]
+        ]
+    else:
+        [
+            example["input_ids"].insert(0, token)
+            for token in example["tokens_to_perturb"][::-1]
+        ]
 
     # truncate to max input size, must also truncate original emb to be comparable
     if len(example["input_ids"]) > max_len:
