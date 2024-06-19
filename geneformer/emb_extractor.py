@@ -38,12 +38,14 @@ def get_embs(
     layer_to_quant,
     pad_token_id,
     forward_batch_size,
+    token_gene_dict,
+    special_token=False,
     summary_stat=None,
     silent=False,
 ):
     model_input_size = pu.get_model_input_size(model)
     total_batch_length = len(filtered_input_data)
-
+    
     if summary_stat is None:
         embs_list = []
     elif summary_stat is not None:
@@ -67,9 +69,25 @@ def get_embs(
                 k: [TDigest() for _ in range(emb_dims)] for k in gene_set
             }
 
+    # Check if CLS and EOS token is present in the token dictionary
+    cls_present = any("<cls>" in value for value in token_gene_dict.values())
+    eos_present = any("<eos>" in value for value in token_gene_dict.values())
+    if emb_mode == "cls":
+        assert cls_present, "<cls> token missing in token dictionary"
+        # Check to make sure that the first token of the filtered input data is cls token
+        for key, value in token_gene_dict.items():
+            if value == "<cls>":
+                cls_token_id = key
+        assert filtered_input_data["input_ids"][0][0] == cls_token_id, "First token is not <cls> token value"
+    else:
+        if cls_present:
+            logger.warning("CLS token present in token dictionary, excluding from average")    
+        if eos_present:
+            logger.warning("EOS token present in token dictionary, excluding from average")
+            
     overall_max_len = 0
-
-    for i in trange(0, total_batch_length, forward_batch_size, leave=(not silent)):
+        
+    for i in trange(0, total_batch_length, forward_batch_size, leave = (not silent)):
         max_range = min(i + forward_batch_size, total_batch_length)
 
         minibatch = filtered_input_data.select([i for i in range(i, max_range)])
@@ -90,9 +108,16 @@ def get_embs(
             )
 
         embs_i = outputs.hidden_states[layer_to_quant]
-
+        
         if emb_mode == "cell":
-            mean_embs = pu.mean_nonpadding_embs(embs_i, original_lens)
+            if cls_present:
+                non_cls_embs = embs_i[:, 1:, :] # Get all layers except the embs
+                if eos_present:
+                    mean_embs = pu.mean_nonpadding_embs(non_cls_embs, original_lens - 2)
+                else:
+                    mean_embs = pu.mean_nonpadding_embs(non_cls_embs, original_lens - 1)
+            else:
+                mean_embs = pu.mean_nonpadding_embs(embs_i, original_lens)
             if summary_stat is None:
                 embs_list.append(mean_embs)
             elif summary_stat is not None:
@@ -121,7 +146,13 @@ def get_embs(
                         accumulate_tdigests(
                             embs_tdigests_dict[int(k)], dict_h[k], emb_dims
                         )
-
+                    del embs_h
+                    del dict_h
+        elif emb_mode == "cls":
+            cls_embs = embs_i[:,0,:] # CLS token layer
+            embs_list.append(cls_embs)
+            del cls_embs
+            
         overall_max_len = max(overall_max_len, max_len)
         del outputs
         del minibatch
@@ -129,7 +160,8 @@ def get_embs(
         del embs_i
 
         torch.cuda.empty_cache()
-
+        
+        
     if summary_stat is None:
         if emb_mode == "cell":
             embs_stack = torch.cat(embs_list, dim=0)
@@ -142,6 +174,8 @@ def get_embs(
                 1,
                 pu.pad_3d_tensor,
             )
+        elif emb_mode == "cls":
+            embs_stack = torch.cat(embs_list, dim=0)
 
     # calculate summary stat embs from approximated tdigests
     elif summary_stat is not None:
@@ -348,7 +382,7 @@ def plot_heatmap(embs_df, emb_dims, label, output_file, kwargs_dict):
             bbox_to_anchor=(0.5, 1),
             facecolor="white",
         )
-
+    print(f"Output file: {output_file}")
     plt.savefig(output_file, bbox_inches="tight")
 
 
@@ -356,7 +390,7 @@ class EmbExtractor:
     valid_option_dict = {
         "model_type": {"Pretrained", "GeneClassifier", "CellClassifier"},
         "num_classes": {int},
-        "emb_mode": {"cell", "gene"},
+        "emb_mode": {"cell", "gene", "cls"},
         "cell_emb_style": {"mean_pool"},
         "gene_emb_style": {"mean_pool"},
         "filter_data": {None, dict},
@@ -365,6 +399,7 @@ class EmbExtractor:
         "emb_label": {None, list},
         "labels_to_plot": {None, list},
         "forward_batch_size": {int},
+        "token_dictionary_file" : {None, str},
         "nproc": {int},
         "summary_stat": {None, "mean", "median", "exact_mean", "exact_median"},
     }
@@ -384,7 +419,7 @@ class EmbExtractor:
         forward_batch_size=100,
         nproc=4,
         summary_stat=None,
-        token_dictionary_file=TOKEN_DICTIONARY_FILE,
+        token_dictionary_file=None,
     ):
         """
         Initialize embedding extractor.
@@ -434,6 +469,7 @@ class EmbExtractor:
             | Non-exact recommended if encountering memory constraints while generating goal embedding positions.
             | Non-exact is slower but more memory-efficient.
         token_dictionary_file : Path
+            | Default is to the geneformer token dictionary
             | Path to pickle file containing token dictionary (Ensembl ID:token).
 
         **Examples:**
@@ -463,6 +499,7 @@ class EmbExtractor:
         self.emb_layer = emb_layer
         self.emb_label = emb_label
         self.labels_to_plot = labels_to_plot
+        self.token_dictionary_file = token_dictionary_file
         self.forward_batch_size = forward_batch_size
         self.nproc = nproc
         if (summary_stat is not None) and ("exact" in summary_stat):
@@ -475,6 +512,8 @@ class EmbExtractor:
         self.validate_options()
 
         # load token dictionary (Ensembl IDs:token)
+        if self.token_dictionary_file is None:
+            token_dictionary_file = TOKEN_DICTIONARY_FILE
         with open(token_dictionary_file, "rb") as f:
             self.gene_token_dict = pickle.load(f)
 
@@ -490,7 +529,7 @@ class EmbExtractor:
                     continue
             valid_type = False
             for option in valid_options:
-                if (option in [int, list, dict, bool]) and isinstance(
+                if (option in [int, list, dict, bool, str]) and isinstance(
                     attr_value, option
                 ):
                     valid_type = True
@@ -570,6 +609,7 @@ class EmbExtractor:
             layer_to_quant,
             self.pad_token_id,
             self.forward_batch_size,
+            self.token_gene_dict,
             self.summary_stat,
         )
 
@@ -584,6 +624,8 @@ class EmbExtractor:
             elif self.summary_stat is not None:
                 embs_df = pd.DataFrame(embs).T
                 embs_df.index = [self.token_gene_dict[token] for token in embs_df.index]
+        elif self.emb_mode == "cls":
+            embs_df = label_cell_embs(embs, downsampled_data, self.emb_label)
 
         # save embeddings to output_path
         if cell_state is None:
@@ -781,7 +823,7 @@ class EmbExtractor:
                         f"not present in provided embeddings dataframe."
                     )
                     continue
-                output_prefix_label = "_" + output_prefix + f"_umap_{label}"
+                output_prefix_label = output_prefix + f"_umap_{label}"
                 output_file = (
                     Path(output_directory) / output_prefix_label
                 ).with_suffix(".pdf")
