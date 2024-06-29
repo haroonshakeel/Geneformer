@@ -75,19 +75,18 @@ def get_embs(
     if emb_mode == "cls":
         assert cls_present, "<cls> token missing in token dictionary"
         # Check to make sure that the first token of the filtered input data is cls token
-        for key, value in token_gene_dict.items():
-            if value == "<cls>":
-                cls_token_id = key
+        gene_token_dict = {v:k for k,v in token_gene_dict}
+        cls_token_id = gene_token_dict["<cls>"]
         assert filtered_input_data["input_ids"][0][0] == cls_token_id, "First token is not <cls> token value"
     else:
         if cls_present:
-            logger.warning("CLS token present in token dictionary, excluding from average")    
+            logger.warning("CLS token present in token dictionary, excluding from average.")    
         if eos_present:
-            logger.warning("EOS token present in token dictionary, excluding from average")
+            logger.warning("EOS token present in token dictionary, excluding from average.")
             
     overall_max_len = 0
         
-    for i in trange(0, total_batch_length, forward_batch_size, leave = (not silent)):
+    for i in trange(0, total_batch_length, forward_batch_size, leave=(not silent)):
         max_range = min(i + forward_batch_size, total_batch_length)
 
         minibatch = filtered_input_data.select([i for i in range(i, max_range)])
@@ -163,7 +162,7 @@ def get_embs(
         
         
     if summary_stat is None:
-        if emb_mode == "cell":
+        if (emb_mode == "cell") or (emb_mode == "cls"):
             embs_stack = torch.cat(embs_list, dim=0)
         elif emb_mode == "gene":
             embs_stack = pu.pad_tensor_list(
@@ -174,8 +173,6 @@ def get_embs(
                 1,
                 pu.pad_3d_tensor,
             )
-        elif emb_mode == "cls":
-            embs_stack = torch.cat(embs_list, dim=0)
 
     # calculate summary stat embs from approximated tdigests
     elif summary_stat is not None:
@@ -382,7 +379,7 @@ def plot_heatmap(embs_df, emb_dims, label, output_file, kwargs_dict):
             bbox_to_anchor=(0.5, 1),
             facecolor="white",
         )
-    print(f"Output file: {output_file}")
+    logger.info(f"Output file: {output_file}")
     plt.savefig(output_file, bbox_inches="tight")
 
 
@@ -390,7 +387,7 @@ class EmbExtractor:
     valid_option_dict = {
         "model_type": {"Pretrained", "GeneClassifier", "CellClassifier"},
         "num_classes": {int},
-        "emb_mode": {"cell", "gene", "cls"},
+        "emb_mode": {"cls", "cell", "gene"},
         "cell_emb_style": {"mean_pool"},
         "gene_emb_style": {"mean_pool"},
         "filter_data": {None, dict},
@@ -431,10 +428,11 @@ class EmbExtractor:
         num_classes : int
             | If model is a gene or cell classifier, specify number of classes it was trained to classify.
             | For the pretrained Geneformer model, number of classes is 0 as it is not a classifier.
-        emb_mode : {"cell", "gene"}
-            | Whether to output cell or gene embeddings.
-        cell_emb_style : "mean_pool"
-            | Method for summarizing cell embeddings.
+        emb_mode : {"cls", "cell", "gene"}
+            | Whether to output CLS, cell, or gene embeddings.
+            | CLS embeddings are cell embeddings derived from the CLS token in the front of the rank value encoding.
+        cell_emb_style : {"mean_pool"}
+            | Method for summarizing cell embeddings if not using CLS token.
             | Currently only option is mean pooling of gene embeddings for given cell.
         gene_emb_style : "mean_pool"
             | Method for summarizing gene embeddings.
@@ -469,7 +467,7 @@ class EmbExtractor:
             | Non-exact recommended if encountering memory constraints while generating goal embedding positions.
             | Non-exact is slower but more memory-efficient.
         token_dictionary_file : Path
-            | Default is to the geneformer token dictionary
+            | Default is the Geneformer token dictionary
             | Path to pickle file containing token dictionary (Ensembl ID:token).
 
         **Examples:**
