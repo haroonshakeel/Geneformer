@@ -50,6 +50,7 @@ from . import perturber_utils as pu
 from .emb_extractor import get_embs
 from .perturber_utils import TOKEN_DICTIONARY_FILE
 
+
 sns.set()
 
 
@@ -65,7 +66,7 @@ class InSilicoPerturber:
         "anchor_gene": {None, str},
         "model_type": {"Pretrained", "GeneClassifier", "CellClassifier"},
         "num_classes": {int},
-        "emb_mode": {"cell", "cell_and_gene"},
+        "emb_mode": {"cls", "cell", "cls_and_gene", "cell_and_gene"},
         "cell_emb_style": {"mean_pool"},
         "filter_data": {None, dict},
         "cell_states_to_model": {None, dict},
@@ -95,10 +96,9 @@ class InSilicoPerturber:
         max_ncells=None,
         cell_inds_to_perturb="all",
         emb_layer=-1,
-        token_dictionary_file=None,
         forward_batch_size=100,
         nproc=4,
-        
+        token_dictionary_file=None,
     ):
         """
         Initialize in silico perturber.
@@ -138,11 +138,11 @@ class InSilicoPerturber:
         num_classes : int
             | If model is a gene or cell classifier, specify number of classes it was trained to classify.
             | For the pretrained Geneformer model, number of classes is 0 as it is not a classifier.
-        emb_mode : {"cell", "cell_and_gene"}
-            | Whether to output impact of perturbation on cell and/or gene embeddings.
+        emb_mode : {"cls", "cell", "cls_and_gene","cell_and_gene"}
+            | Whether to output impact of perturbation on CLS token, cell, and/or gene embeddings.
             | Gene embedding shifts only available as compared to original cell, not comparing to goal state.
         cell_emb_style : "mean_pool"
-            | Method for summarizing cell embeddings.
+            | Method for summarizing cell embeddings if not using CLS token.
             | Currently only option is mean pooling of gene embeddings for given cell.
         filter_data : None, dict
             | Default is to use all input data for in silico perturbation study.
@@ -188,6 +188,10 @@ class InSilicoPerturber:
         token_dictionary_file : Path
             | Path to pickle file containing token dictionary (Ensembl ID:token).
         """
+        try:
+            set_start_method("spawn")
+        except RuntimeError:
+            pass
 
         self.perturb_type = perturb_type
         self.perturb_rank_shift = perturb_rank_shift
@@ -217,9 +221,9 @@ class InSilicoPerturber:
         self.max_ncells = max_ncells
         self.cell_inds_to_perturb = cell_inds_to_perturb
         self.emb_layer = emb_layer
-        self.token_dictionary_file = token_dictionary_file
         self.forward_batch_size = forward_batch_size
         self.nproc = nproc
+        self.token_dictionary_file = token_dictionary_file
 
         self.validate_options()
 
@@ -236,9 +240,14 @@ class InSilicoPerturber:
         # Identify if special token is present in the token dictionary
         lowercase_token_gene_dict = {k: v.lower() for k, v in self.token_gene_dict.items()}
         cls_present = any("cls" in value for value in lowercase_token_gene_dict.values())
-        sep_present = any("sep" in value for value in lowercase_token_gene_dict.values())
-        if cls_present or sep_present:
+        eos_present = any("eos" in value for value in lowercase_token_gene_dict.values())
+        if cls_present or eos_present:
             self.special_token = True
+        else:
+            if "cls" in self.emb_mode:
+                logger.error(f"emb_mode set to {self.emb_mode} but <cls> token not in token dictionary.")
+                raise
+            self.special_token = False
 
         if self.anchor_gene is None:
             self.anchor_token = None
@@ -442,6 +451,16 @@ class InSilicoPerturber:
         filtered_input_data = pu.load_and_filter(
             self.filter_data, self.nproc, input_data_file
         )
+
+        # Ensure emb_mode is cls if first token of the filtered input data is cls token
+        if self.special_token:
+            cls_token_id = self.gene_token_dict["<cls>"]
+            if (filtered_input_data["input_ids"][0][0] == cls_token_id) and ("cls" not in self.emb_mode):
+                logger.error(
+                            "Emb mode 'cls' or 'cls_and_gene' required when first token is <cls>."
+                        )
+                raise
+
         filtered_input_data = self.apply_additional_filters(filtered_input_data)
 
         if self.perturb_group is True:
@@ -544,9 +563,14 @@ class InSilicoPerturber:
             # then the perturbed cell will be 2048+0:2046 so we compare it to an original cell 0:2046.
             # (otherwise we will be modeling the effect of both deleting 2047 and adding 2048,
             # rather than only adding 2048)
-            filtered_input_data = filtered_input_data.map(
-                pu.truncate_by_n_overflow, num_proc=self.nproc
-            )
+            if self.special_token:
+                filtered_input_data = filtered_input_data.map(
+                    pu.truncate_by_n_overflow_special, num_proc=self.nproc
+                )                
+            else:
+                filtered_input_data = filtered_input_data.map(
+                    pu.truncate_by_n_overflow, num_proc=self.nproc
+                )
 
         if self.emb_mode == "cell_and_gene":
             stored_gene_embs_dict = defaultdict(list)
@@ -592,20 +616,27 @@ class InSilicoPerturber:
                     silent=True,
                 )
 
-                # remove overexpressed genes
+                if "cls" not in self.emb_mode:
+                    start = 0
+                else:
+                    start = 1
+
+                # remove overexpressed genes and cls
+                original_emb = original_emb[
+                    :, start :, :
+                ]
                 if self.perturb_type == "overexpress":
                     perturbation_emb = full_perturbation_emb[
-                        :, len(self.tokens_to_perturb) :, :
+                        :, start+len(self.tokens_to_perturb) :, :
                     ]
-
                 elif self.perturb_type == "delete":
                     perturbation_emb = full_perturbation_emb[
-                        :, : max(perturbation_batch["length"]), :
+                        :, start : max(perturbation_batch["length"]), :
                     ]
 
                 n_perturbation_genes = perturbation_emb.size()[1]
 
-                # if no goal states, the cosine similarties are the mean of gene cosine similarities
+                # if no goal states, the cosine similarities are the mean of gene cosine similarities
                 if (
                     self.cell_states_to_model is None
                     or self.emb_mode == "cell_and_gene"
@@ -620,16 +651,22 @@ class InSilicoPerturber:
 
                 # if there are goal states, the cosine similarities are the cell cosine similarities
                 if self.cell_states_to_model is not None:
-                    original_cell_emb = pu.mean_nonpadding_embs(
-                        full_original_emb,
-                        torch.tensor(minibatch["length"], device="cuda"),
-                        dim=1,
-                    )
-                    perturbation_cell_emb = pu.mean_nonpadding_embs(
-                        full_perturbation_emb,
-                        torch.tensor(perturbation_batch["length"], device="cuda"),
-                        dim=1,
-                    )
+                    if "cls" not in self.emb_mode:
+                        original_cell_emb = pu.mean_nonpadding_embs(
+                            full_original_emb,
+                            torch.tensor(minibatch["length"], device="cuda"),
+                            dim=1,
+                        )
+                        perturbation_cell_emb = pu.mean_nonpadding_embs(
+                            full_perturbation_emb,
+                            torch.tensor(perturbation_batch["length"], device="cuda"),
+                            dim=1,
+                        )
+                    else:
+                        # get cls emb
+                        original_cell_emb = full_original_emb[:,0,:]
+                        perturbation_cell_emb = full_perturbation_emb[:,0,:]
+
                     cell_cos_sims = pu.quant_cos_sims(
                         perturbation_cell_emb,
                         original_cell_emb,
@@ -649,6 +686,9 @@ class InSilicoPerturber:
                         ]
                         for genes in gene_list
                     ]
+                    # remove CLS if present
+                    if "cls" in self.emb_mode:
+                        gene_list = gene_list[1:]
 
                     for cell_i, genes in enumerate(gene_list):
                         for gene_j, affected_gene in enumerate(genes):
@@ -681,9 +721,21 @@ class InSilicoPerturber:
                     ]
                 else:
                     nonpadding_lens = perturbation_batch["length"]
-                cos_sims_data = pu.mean_nonpadding_embs(
-                    gene_cos_sims, torch.tensor(nonpadding_lens, device="cuda")
-                )
+                if "cls" not in self.emb_mode:
+                    cos_sims_data = pu.mean_nonpadding_embs(
+                        gene_cos_sims, torch.tensor(nonpadding_lens, device="cuda")
+                    )
+                else:
+                    original_cls_emb = full_original_emb[:,0,:]
+                    perturbation_cls_emb = full_perturbation_emb[:,0,:]
+                    cos_sims_data = pu.quant_cos_sims(
+                        perturbation_cls_emb,
+                        original_cls_emb,
+                        self.cell_states_to_model,
+                        self.state_embs_dict,
+                        emb_mode="cell",
+                    )
+
                 cos_sims_dict = self.update_perturbation_dictionary(
                     cos_sims_dict,
                     cos_sims_data,
@@ -703,9 +755,15 @@ class InSilicoPerturber:
                     )
             del minibatch
             del perturbation_batch
+            del full_original_emb
             del original_emb
+            del full_perturbation_emb
             del perturbation_emb
             del cos_sims_data
+            if "cls" in self.emb_mode:
+                del original_cls_emb
+                del perturbation_cls_emb
+                del cls_cos_sims
 
             torch.cuda.empty_cache()
 
@@ -766,6 +824,7 @@ class InSilicoPerturber:
                 self.anchor_token,
                 self.combos,
                 self.nproc,
+                self.special_token,
             )
 
             full_perturbation_emb = get_embs(
@@ -781,16 +840,22 @@ class InSilicoPerturber:
             )
 
             num_inds_perturbed = 1 + self.combos
-            # need to remove overexpressed gene to quantify cosine shifts
+            # need to remove overexpressed gene and cls to quantify cosine shifts
+            if "cls" not in self.emb_mode:
+                start = 0
+            else:
+                start = 1
             if self.perturb_type == "overexpress":
-                perturbation_emb = full_perturbation_emb[:, num_inds_perturbed:, :]
+                perturbation_emb = full_perturbation_emb[:, start+num_inds_perturbed:, :]
                 gene_list = gene_list[
-                    num_inds_perturbed:
-                ]  # index 0 is not overexpressed
+                    start+num_inds_perturbed:
+                ]  # cls and index 0 is not overexpressed
 
             elif self.perturb_type == "delete":
-                perturbation_emb = full_perturbation_emb
+                perturbation_emb = full_perturbation_emb[:, start:, :]
+                gene_list = gene_list[start:]
 
+            full_original_emb = full_original_emb[:, start:, :]
             original_batch = pu.make_comparison_batch(
                 full_original_emb, indices_to_perturb, perturb_group=False
             )
@@ -803,13 +868,19 @@ class InSilicoPerturber:
                     self.state_embs_dict,
                     emb_mode="gene",
                 )
+
             if self.cell_states_to_model is not None:
-                original_cell_emb = pu.compute_nonpadded_cell_embedding(
-                    full_original_emb, "mean_pool"
-                )
-                perturbation_cell_emb = pu.compute_nonpadded_cell_embedding(
-                    full_perturbation_emb, "mean_pool"
-                )
+                if "cls" not in self.emb_mode:
+                    original_cell_emb = pu.compute_nonpadded_cell_embedding(
+                        full_original_emb, "mean_pool"
+                    )
+                    perturbation_cell_emb = pu.compute_nonpadded_cell_embedding(
+                        full_perturbation_emb, "mean_pool"
+                    )
+                else:
+                    # get cls emb
+                    original_cell_emb = full_original_emb[:,0,:]
+                    perturbation_cell_emb = full_perturbation_emb[:,0,:]
 
                 cell_cos_sims = pu.quant_cos_sims(
                     perturbation_cell_emb,
@@ -840,7 +911,18 @@ class InSilicoPerturber:
                             ] = gene_cos_sims[perturbation_i, gene_j].item()
 
             if self.cell_states_to_model is None:
-                cos_sims_data = torch.mean(gene_cos_sims, dim=1)
+                if "cls" not in self.emb_mode:
+                    cos_sims_data = torch.mean(gene_cos_sims, dim=1)
+                else:
+                    original_cls_emb = full_original_emb[:,0,:]
+                    perturbation_cls_emb = full_perturbation_emb[:,0,:]
+                    cos_sims_data = pu.quant_cos_sims(
+                        perturbation_cls_emb,
+                        original_cls_emb,
+                        self.cell_states_to_model,
+                        self.state_embs_dict,
+                        emb_mode="cell",
+                    )
                 cos_sims_dict = self.update_perturbation_dictionary(
                     cos_sims_dict,
                     cos_sims_data,
