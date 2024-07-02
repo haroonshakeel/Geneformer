@@ -228,16 +228,32 @@ def overexpress_indices(example):
     example["length"] = len(example["input_ids"])
     return example
 
+# if CLS token present, move to 1st rather than 0th position
+def overexpress_indices_special(example):
+    indices = example["perturb_index"]
+    if any(isinstance(el, list) for el in indices):
+        indices = flatten_list(indices)
+    for index in sorted(indices, reverse=True):
+        example["input_ids"].insert(1, example["input_ids"].pop(index))
+
+    example["length"] = len(example["input_ids"])
+    return example
 
 # for genes_to_perturb = list of genes to overexpress that are not necessarily expressed in cell
-def overexpress_tokens(example, max_len):
+def overexpress_tokens(example, max_len, special_token):
     # -100 indicates tokens to overexpress are not present in rank value encoding
     if example["perturb_index"] != [-100]:
         example = delete_indices(example)
-    [
-        example["input_ids"].insert(0, token)
-        for token in example["tokens_to_perturb"][::-1]
-    ]
+    if special_token:
+        [
+            example["input_ids"].insert(1, token)
+            for token in example["tokens_to_perturb"][::-1]
+        ]
+    else:
+        [
+            example["input_ids"].insert(0, token)
+            for token in example["tokens_to_perturb"][::-1]
+        ]
 
     # truncate to max input size, must also truncate original emb to be comparable
     if len(example["input_ids"]) > max_len:
@@ -256,6 +272,12 @@ def calc_n_overflow(max_len, example_len, tokens_to_perturb, indices_to_perturb)
 def truncate_by_n_overflow(example):
     new_max_len = example["length"] - example["n_overflow"]
     example["input_ids"] = example["input_ids"][0:new_max_len]
+    example["length"] = len(example["input_ids"])
+    return example
+
+def truncate_by_n_overflow_special(example):
+    new_max_len = example["length"] - example["n_overflow"]
+    example["input_ids"] = example["input_ids"][0:new_max_len-1]+[example["input_ids"][-1]]
     example["length"] = len(example["input_ids"])
     return example
 
@@ -321,7 +343,7 @@ def remove_perturbed_indices_set(
 
 
 def make_perturbation_batch(
-    example_cell, perturb_type, tokens_to_perturb, anchor_token, combo_lvl, num_proc
+    example_cell, perturb_type, tokens_to_perturb, anchor_token, combo_lvl, num_proc, special_token
 ) -> tuple[Dataset, List[int]]:
     if combo_lvl == 0 and tokens_to_perturb == "all":
         if perturb_type in ["overexpress", "activate"]:
@@ -383,9 +405,14 @@ def make_perturbation_batch(
             delete_indices, num_proc=num_proc_i
         )
     elif perturb_type == "overexpress":
-        perturbation_dataset = perturbation_dataset.map(
-            overexpress_indices, num_proc=num_proc_i
-        )
+        if special_token:
+            perturbation_dataset = perturbation_dataset.map(
+                overexpress_indices_special, num_proc=num_proc_i
+            )
+        else:
+            perturbation_dataset = perturbation_dataset.map(
+                overexpress_indices, num_proc=num_proc_i
+            )
 
     perturbation_dataset = perturbation_dataset.map(measure_length, num_proc=num_proc_i)
 
