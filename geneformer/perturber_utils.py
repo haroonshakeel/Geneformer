@@ -259,7 +259,7 @@ def overexpress_tokens(example, max_len, special_token):
     # truncate to max input size, must also truncate original emb to be comparable
     if len(example["input_ids"]) > max_len:
         if special_token:
-            del example["input_ids"][max_len-1]
+            example["input_ids"] = example["input_ids"][0:max_len-1]+[example["input_ids"][-1]]
         else:
             example["input_ids"] = example["input_ids"][0:max_len]
     example["length"] = len(example["input_ids"])
