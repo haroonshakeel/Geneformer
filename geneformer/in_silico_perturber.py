@@ -99,6 +99,7 @@ class InSilicoPerturber:
         forward_batch_size=100,
         nproc=4,
         token_dictionary_file=None,
+        clear_mem_ncells=1000,
     ):
         """
         Initialize in silico perturber.
@@ -187,6 +188,8 @@ class InSilicoPerturber:
             | Number of CPU processes to use.
         token_dictionary_file : Path
             | Path to pickle file containing token dictionary (Ensembl ID:token).
+        clear_mem_ncells : int
+            | Clear memory every n cells.
         """
         try:
             set_start_method("spawn")
@@ -224,6 +227,7 @@ class InSilicoPerturber:
         self.forward_batch_size = forward_batch_size
         self.nproc = nproc
         self.token_dictionary_file = token_dictionary_file
+        self.clear_mem_ncells = clear_mem_ncells
 
         self.validate_options()
 
@@ -235,17 +239,16 @@ class InSilicoPerturber:
         self.token_gene_dict = {v: k for k, v in self.gene_token_dict.items()}
 
         self.pad_token_id = self.gene_token_dict.get("<pad>")
+        self.cls_token_id = self.gene_token_dict.get("<cls>")
+        self.eos_token_id = self.gene_token_dict.get("<eos>")
 
 
         # Identify if special token is present in the token dictionary
-        lowercase_token_gene_dict = {k: v.lower() for k, v in self.token_gene_dict.items()}
-        cls_present = any("cls" in value for value in lowercase_token_gene_dict.values())
-        eos_present = any("eos" in value for value in lowercase_token_gene_dict.values())
-        if cls_present or eos_present:
+        if (self.cls_token_id is not None) and (self.eos_token_id is not None):
             self.special_token = True
         else:
             if "cls" in self.emb_mode:
-                logger.error(f"emb_mode set to {self.emb_mode} but <cls> token not in token dictionary.")
+                logger.error(f"emb_mode set to {self.emb_mode} but <cls> or <eos> token not in token dictionary.")
                 raise
             self.special_token = False
 
@@ -454,12 +457,17 @@ class InSilicoPerturber:
 
         # Ensure emb_mode is cls if first token of the filtered input data is cls token
         if self.special_token:
-            cls_token_id = self.gene_token_dict["<cls>"]
-            if (filtered_input_data["input_ids"][0][0] == cls_token_id) and ("cls" not in self.emb_mode):
+            if (filtered_input_data["input_ids"][0][0] == self.cls_token_id) and ("cls" not in self.emb_mode):
                 logger.error(
                             "Emb mode 'cls' or 'cls_and_gene' required when first token is <cls>."
                         )
                 raise
+            if ("cls" in self.emb_mode):
+                if (filtered_input_data["input_ids"][0][0] != self.cls_token_id) or (filtered_input_data["input_ids"][0][-1] != self.eos_token_id):
+                    logger.error(
+                                "Emb mode 'cls' and 'cls_and_gene' require that first token is <cls> and last token is <eos>."
+                            )
+                    raise                    
 
         filtered_input_data = self.apply_additional_filters(filtered_input_data)
 
@@ -554,6 +562,7 @@ class InSilicoPerturber:
         perturbed_data = filtered_input_data.map(
             make_group_perturbation_batch, num_proc=self.nproc
         )
+        
         if self.perturb_type == "overexpress":
             filtered_input_data = filtered_input_data.add_column(
                 "n_overflow", perturbed_data["n_overflow"]
@@ -572,7 +581,7 @@ class InSilicoPerturber:
                     pu.truncate_by_n_overflow, num_proc=self.nproc
                 )
 
-        if self.emb_mode == "cell_and_gene":
+        if (self.emb_mode == "cell_and_gene") or (self.emb_mode == "cls_and_gene"):
             stored_gene_embs_dict = defaultdict(list)
 
         # iterate through batches
@@ -618,20 +627,24 @@ class InSilicoPerturber:
 
                 if "cls" not in self.emb_mode:
                     start = 0
+                    end_add = 0
+                    end = None
                 else:
                     start = 1
+                    end_add = -1
+                    end = -1
 
-                # remove overexpressed genes and cls
+                # remove overexpressed genes and cls/eos
                 original_emb = original_emb[
-                    :, start :, :
+                    :, start : end, :
                 ]
                 if self.perturb_type == "overexpress":
                     perturbation_emb = full_perturbation_emb[
-                        :, start+len(self.tokens_to_perturb) :, :
+                        :, start+len(self.tokens_to_perturb) : end, :
                     ]
                 elif self.perturb_type == "delete":
                     perturbation_emb = full_perturbation_emb[
-                        :, start : max(perturbation_batch["length"]), :
+                        :, start : max(perturbation_batch["length"])+end_add, :
                     ]
 
                 n_perturbation_genes = perturbation_emb.size()[1]
@@ -640,6 +653,7 @@ class InSilicoPerturber:
                 if (
                     self.cell_states_to_model is None
                     or self.emb_mode == "cell_and_gene"
+                    or self.emb_mode == "cls_and_gene"
                 ):
                     gene_cos_sims = pu.quant_cos_sims(
                         perturbation_emb,
@@ -677,18 +691,23 @@ class InSilicoPerturber:
 
                 # get cosine similarities in gene embeddings
                 # if getting gene embeddings, need gene names
-                if self.emb_mode == "cell_and_gene":
+                if (self.emb_mode == "cell_and_gene") or (self.emb_mode == "cls_and_gene"):
                     gene_list = minibatch["input_ids"]
                     # need to truncate gene_list
+                    genes_to_exclude = self.tokens_to_perturb
+                    if self.emb_mode == "cls_and_gene":
+                        genes_to_exclude = genes_to_exclude + [self.cls_token_id, self.eos_token_id]
                     gene_list = [
-                        [g for g in genes if g not in self.tokens_to_perturb][
+                        [g for g in genes if g not in genes_to_exclude][
                             :n_perturbation_genes
                         ]
                         for genes in gene_list
                     ]
-                    # remove CLS if present
-                    if "cls" in self.emb_mode:
-                        gene_list = gene_list[1:]
+                    # remove CLS and EOS if present
+                    # if "cls" in self.emb_mode:
+                    #     cls_token_id = self.gene_token_dict["<cls>"]
+                    #     eos_token_id = self.gene_token_dict["<eos>"]
+                    #     gene_list = [e for e in gene_list if e not in [cls_token_id,eos_token_id]]
 
                     for cell_i, genes in enumerate(gene_list):
                         for gene_j, affected_gene in enumerate(genes):
@@ -760,10 +779,9 @@ class InSilicoPerturber:
             del full_perturbation_emb
             del perturbation_emb
             del cos_sims_data
-            if "cls" in self.emb_mode:
+            if ("cls" in self.emb_mode) and (self.cell_states_to_model is None):
                 del original_cls_emb
                 del perturbation_cls_emb
-                del cls_cos_sims
 
             torch.cuda.empty_cache()
 
@@ -772,7 +790,7 @@ class InSilicoPerturber:
             f"{output_path_prefix}_cell_embs_dict_{self.tokens_to_perturb}",
         )
 
-        if self.emb_mode == "cell_and_gene":
+        if (self.emb_mode == "cell_and_gene") or (self.emb_mode == "cls_and_gene"):
             pu.write_perturbation_dictionary(
                 stored_gene_embs_dict,
                 f"{output_path_prefix}_gene_embs_dict_{self.tokens_to_perturb}",
@@ -794,7 +812,7 @@ class InSilicoPerturber:
                 for state in pu.get_possible_states(self.cell_states_to_model)
             }
 
-        if self.emb_mode == "cell_and_gene":
+        if (self.emb_mode == "cell_and_gene") or (self.emb_mode == "cls_and_gene"):
             stored_gene_embs_dict = defaultdict(list)
         for i in trange(len(filtered_input_data)):
             example_cell = filtered_input_data.select([i])
@@ -840,27 +858,31 @@ class InSilicoPerturber:
             )
 
             num_inds_perturbed = 1 + self.combos
-            # need to remove overexpressed gene and cls to quantify cosine shifts
+            
+            # need to remove overexpressed gene and cls/eos to quantify cosine shifts
             if "cls" not in self.emb_mode:
                 start = 0
+                end = None
             else:
                 start = 1
+                end = -1
             if self.perturb_type == "overexpress":
-                perturbation_emb = full_perturbation_emb[:, start+num_inds_perturbed:, :]
+                perturbation_emb = full_perturbation_emb[:, start+num_inds_perturbed:end, :]
                 gene_list = gene_list[
-                    start+num_inds_perturbed:
-                ]  # cls and index 0 is not overexpressed
+                    start+num_inds_perturbed:end
+                ]  # cls/eos and index 0 is not overexpressed
 
             elif self.perturb_type == "delete":
-                perturbation_emb = full_perturbation_emb[:, start:, :]
-                gene_list = gene_list[start:]
+                perturbation_emb = full_perturbation_emb[:, start:end, :]
+                gene_list = gene_list[start:end]
 
-            full_original_emb = full_original_emb[:, start:, :]
             original_batch = pu.make_comparison_batch(
                 full_original_emb, indices_to_perturb, perturb_group=False
             )
 
-            if self.cell_states_to_model is None or self.emb_mode == "cell_and_gene":
+            original_batch = original_batch[:, start:end, :]
+
+            if self.cell_states_to_model is None or self.emb_mode == "cell_and_gene" or self.emb_mode == "cls_and_gene":
                 gene_cos_sims = pu.quant_cos_sims(
                     perturbation_emb,
                     original_batch,
@@ -890,7 +912,7 @@ class InSilicoPerturber:
                     emb_mode="cell",
                 )
 
-            if self.emb_mode == "cell_and_gene":
+            if (self.emb_mode == "cell_and_gene") or (self.emb_mode == "cls_and_gene"):
                 # remove perturbed index for gene list
                 perturbed_gene_dict = {
                     gene: gene_list[:i] + gene_list[i + 1 :]
@@ -942,19 +964,19 @@ class InSilicoPerturber:
                     )
 
             # save dict to disk every 100 cells
-            if i % 100 == 0:
+            if i % clear_mem_ncells/10 == 0:
                 pu.write_perturbation_dictionary(
                     cos_sims_dict,
                     f"{output_path_prefix}_dict_cell_embs_1Kbatch{pickle_batch}",
                 )
-                if self.emb_mode == "cell_and_gene":
+                if (self.emb_mode == "cell_and_gene") or (self.emb_mode == "cls_and_gene"):
                     pu.write_perturbation_dictionary(
                         stored_gene_embs_dict,
                         f"{output_path_prefix}_dict_gene_embs_1Kbatch{pickle_batch}",
                     )
 
             # reset and clear memory every 1000 cells
-            if i % 1000 == 0:
+            if i % clear_mem_ncells == 0:
                 pickle_batch += 1
                 if self.cell_states_to_model is None:
                     cos_sims_dict = defaultdict(list)
@@ -964,7 +986,7 @@ class InSilicoPerturber:
                         for state in pu.get_possible_states(self.cell_states_to_model)
                     }
 
-                if self.emb_mode == "cell_and_gene":
+                if (self.emb_mode == "cell_and_gene") or (self.emb_mode == "cls_and_gene"):
                     stored_gene_embs_dict = defaultdict(list)
 
                 torch.cuda.empty_cache()
@@ -973,7 +995,7 @@ class InSilicoPerturber:
             cos_sims_dict, f"{output_path_prefix}_dict_cell_embs_1Kbatch{pickle_batch}"
         )
 
-        if self.emb_mode == "cell_and_gene":
+        if (self.emb_mode == "cell_and_gene") or (self.emb_mode == "cls_and_gene"):
             pu.write_perturbation_dictionary(
                 stored_gene_embs_dict,
                 f"{output_path_prefix}_dict_gene_embs_1Kbatch{pickle_batch}",
