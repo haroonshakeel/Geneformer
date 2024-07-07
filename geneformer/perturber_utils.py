@@ -620,9 +620,10 @@ def quant_cos_sims(
         cos = torch.nn.CosineSimilarity(dim=1)
 
     # if emb_mode == "gene", can only calculate gene cos sims
-    # against original cell anyways
+    # against original cell
     if cell_states_to_model is None or emb_mode == "gene":
         cos_sims = cos(perturbation_emb, original_emb).to("cuda")
+        
     elif cell_states_to_model is not None and emb_mode == "cell":
         possible_states = get_possible_states(cell_states_to_model)
         cos_sims = dict(zip(possible_states, [[] for _ in range(len(possible_states))]))
