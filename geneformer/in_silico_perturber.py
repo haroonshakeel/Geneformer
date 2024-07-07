@@ -964,7 +964,7 @@ class InSilicoPerturber:
                     )
 
             # save dict to disk every 100 cells
-            if i % clear_mem_ncells/10 == 0:
+            if i % self.clear_mem_ncells/10 == 0:
                 pu.write_perturbation_dictionary(
                     cos_sims_dict,
                     f"{output_path_prefix}_dict_cell_embs_1Kbatch{pickle_batch}",
@@ -976,7 +976,7 @@ class InSilicoPerturber:
                     )
 
             # reset and clear memory every 1000 cells
-            if i % clear_mem_ncells == 0:
+            if i % self.clear_mem_ncells == 0:
                 pickle_batch += 1
                 if self.cell_states_to_model is None:
                     cos_sims_dict = defaultdict(list)
