@@ -50,9 +50,7 @@ def get_embs(
         embs_list = []
     elif summary_stat is not None:
         # test embedding extraction for example cell and extract # emb dims
-        example = filtered_input_data.select([i for i in range(1)])
-        example.set_format(type="torch")
-        emb_dims = test_emb(model, example["input_ids"], layer_to_quant)
+        emb_dims = pu.get_model_embedding_dimensions(model)
         if emb_mode == "cell":
             # initiate tdigests for # of emb dims
             embs_tdigests = [TDigest() for _ in range(emb_dims)]
@@ -78,7 +76,7 @@ def get_embs(
         gene_token_dict = {v:k for k,v in token_gene_dict.items()}
         cls_token_id = gene_token_dict["<cls>"]
         assert filtered_input_data["input_ids"][0][0] == cls_token_id, "First token is not <cls> token value"
-    elif emb_mode == "cell":
+    else:
         if cls_present:
             logger.warning("CLS token present in token dictionary, excluding from average.")    
         if eos_present:
@@ -148,7 +146,7 @@ def get_embs(
                     del embs_h
                     del dict_h
         elif emb_mode == "cls":
-            cls_embs = embs_i[:,0,:].clone().detach() # CLS token layer
+            cls_embs = embs_i[:,0,:] # CLS token layer
             embs_list.append(cls_embs)
             del cls_embs
             
@@ -237,14 +235,6 @@ def tdigest_mean(embs_tdigests, emb_dims):
 
 def tdigest_median(embs_tdigests, emb_dims):
     return [embs_tdigests[i].percentile(50) for i in range(emb_dims)]
-
-
-def test_emb(model, example, layer_to_quant):
-    with torch.no_grad():
-        outputs = model(input_ids=example.to("cuda"))
-
-    embs_test = outputs.hidden_states[layer_to_quant]
-    return embs_test.size()[2]
 
 
 def label_cell_embs(embs, downsampled_data, emb_labels):
@@ -632,13 +622,15 @@ class EmbExtractor:
 
         if self.exact_summary_stat == "exact_mean":
             embs = embs.mean(dim=0)
+            emb_dims = pu.get_model_embedding_dimensions(model)
             embs_df = pd.DataFrame(
-                embs_df[0:255].mean(axis="rows"), columns=[self.exact_summary_stat]
+                embs_df[0:emb_dims-1].mean(axis="rows"), columns=[self.exact_summary_stat]
             ).T
         elif self.exact_summary_stat == "exact_median":
             embs = torch.median(embs, dim=0)[0]
+            emb_dims = pu.get_model_embedding_dimensions(model)
             embs_df = pd.DataFrame(
-                embs_df[0:255].median(axis="rows"), columns=[self.exact_summary_stat]
+                embs_df[0:emb_dims-1].median(axis="rows"), columns=[self.exact_summary_stat]
             ).T
 
         if cell_state is not None:
