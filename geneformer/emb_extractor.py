@@ -49,8 +49,8 @@ def get_embs(
     if summary_stat is None:
         embs_list = []
     elif summary_stat is not None:
-        # test embedding extraction for example cell and extract # emb dims
-        emb_dims = pu.get_model_embedding_dimensions(model)
+        # get # of emb dims
+        emb_dims = pu.get_model_emb_dims(model)
         if emb_mode == "cell":
             # initiate tdigests for # of emb dims
             embs_tdigests = [TDigest() for _ in range(emb_dims)]
@@ -76,7 +76,7 @@ def get_embs(
         gene_token_dict = {v:k for k,v in token_gene_dict.items()}
         cls_token_id = gene_token_dict["<cls>"]
         assert filtered_input_data["input_ids"][0][0] == cls_token_id, "First token is not <cls> token value"
-    else:
+    elif emb_mode == "cell":
         if cls_present:
             logger.warning("CLS token present in token dictionary, excluding from average.")    
         if eos_present:
@@ -146,7 +146,7 @@ def get_embs(
                     del embs_h
                     del dict_h
         elif emb_mode == "cls":
-            cls_embs = embs_i[:,0,:] # CLS token layer
+            cls_embs = embs_i[:,0,:].clone().detach() # CLS token layer
             embs_list.append(cls_embs)
             del cls_embs
             
