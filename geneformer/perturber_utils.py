@@ -155,6 +155,9 @@ def quant_layers(model):
             layer_nums += [int(name.split("layer.")[1].split(".")[0])]
     return int(max(layer_nums)) + 1
 
+def get_model_embedding_dimensions(model):
+    return int(re.split("\(|,", str(model.bert.embeddings.position_embeddings))[2].strip().replace(")", ""))
+
 
 def get_model_input_size(model):
     return int(re.split("\(|,", str(model.bert.embeddings.position_embeddings))[1])
@@ -222,9 +225,10 @@ def overexpress_indices(example):
     indices = example["perturb_index"]
     if any(isinstance(el, list) for el in indices):
         indices = flatten_list(indices)
-    for index in sorted(indices, reverse=True):
-        example["input_ids"].insert(0, example["input_ids"].pop(index))
-
+    insert_pos = 0
+    for index in sorted(indices, reverse=False):
+        example["input_ids"].insert(insert_pos, example["input_ids"].pop(index))
+        insert_pos += 1
     example["length"] = len(example["input_ids"])
     return example
 
@@ -233,15 +237,15 @@ def overexpress_indices_special(example):
     indices = example["perturb_index"]
     if any(isinstance(el, list) for el in indices):
         indices = flatten_list(indices)
-    for index in sorted(indices, reverse=True):
-        example["input_ids"].insert(1, example["input_ids"].pop(index))
-
+    insert_pos = 1 # Insert starting after CLS token
+    for index in sorted(indices, reverse=False):
+        example["input_ids"].insert(insert_pos, example["input_ids"].pop(index))
+        insert_pos += 1
     example["length"] = len(example["input_ids"])
     return example
 
 # for genes_to_perturb = list of genes to overexpress that are not necessarily expressed in cell
 def overexpress_tokens(example, max_len, special_token):
-    original_len = example["length"]
     # -100 indicates tokens to overexpress are not present in rank value encoding
     if example["perturb_index"] != [-100]:
         example = delete_indices(example)
@@ -347,7 +351,7 @@ def remove_perturbed_indices_set(
 
 
 def make_perturbation_batch(
-    example_cell, perturb_type, tokens_to_perturb, anchor_token, combo_lvl, num_proc, special_token
+    example_cell, perturb_type, tokens_to_perturb, anchor_token, combo_lvl, num_proc
 ) -> tuple[Dataset, List[int]]:
     if combo_lvl == 0 and tokens_to_perturb == "all":
         if perturb_type in ["overexpress", "activate"]:
@@ -355,7 +359,7 @@ def make_perturbation_batch(
         elif perturb_type in ["delete", "inhibit"]:
             range_start = 0
         indices_to_perturb = [
-            [i] for i in range(range_start, example_cell["length"][0])
+                [i] for i in range(range_start, example_cell["length"][0])
         ]
     # elif combo_lvl > 0 and anchor_token is None:
     ## to implement
@@ -409,14 +413,84 @@ def make_perturbation_batch(
             delete_indices, num_proc=num_proc_i
         )
     elif perturb_type == "overexpress":
-        if special_token:
-            perturbation_dataset = perturbation_dataset.map(
-                overexpress_indices_special, num_proc=num_proc_i
-            )
-        else:
-            perturbation_dataset = perturbation_dataset.map(
+        perturbation_dataset = perturbation_dataset.map(
                 overexpress_indices, num_proc=num_proc_i
-            )
+        )
+
+    perturbation_dataset = perturbation_dataset.map(measure_length, num_proc=num_proc_i)
+
+    return perturbation_dataset, indices_to_perturb
+
+
+def make_perturbation_batch_special(
+    example_cell, perturb_type, tokens_to_perturb, anchor_token, combo_lvl, num_proc
+) -> tuple[Dataset, List[int]]:
+    if combo_lvl == 0 and tokens_to_perturb == "all":
+        if perturb_type in ["overexpress", "activate"]:
+            range_start = 1
+        elif perturb_type in ["delete", "inhibit"]:
+            range_start = 0
+        range_start += 1 # Starting after the CLS token
+        indices_to_perturb = [
+            [i] for i in range(range_start, example_cell["length"][0]-1) # And excluding the EOS token
+        ]
+
+    # elif combo_lvl > 0 and anchor_token is None:
+    ## to implement
+    elif combo_lvl > 0 and (anchor_token is not None): 
+        example_input_ids = example_cell["input_ids"][0]
+        anchor_index = example_input_ids.index(anchor_token[0])
+        indices_to_perturb = [
+            sorted([anchor_index, i]) if i != anchor_index else None
+            for i in range(1, example_cell["length"][0]-1) # Exclude CLS and EOS tokens
+        ]
+        indices_to_perturb = [item for item in indices_to_perturb if item is not None]
+    else: # still need to update 
+        example_input_ids = example_cell["input_ids"][0]
+        indices_to_perturb = [
+            [example_input_ids.index(token)] if token in example_input_ids else None
+            for token in tokens_to_perturb
+        ]
+        indices_to_perturb = [item for item in indices_to_perturb if item is not None]
+
+    # create all permutations of combo_lvl of modifiers from tokens_to_perturb
+    # still need to update
+    if combo_lvl > 0 and (anchor_token is None):
+        if tokens_to_perturb != "all":
+            if len(tokens_to_perturb) == combo_lvl + 1:
+                indices_to_perturb = [
+                    list(x) for x in it.combinations(indices_to_perturb, combo_lvl + 1)
+                ]
+        else:
+            all_indices = [[i] for i in range(1, example_cell["length"][0]-1)] # Exclude CLS and EOS tokens
+            all_indices = [
+                index for index in all_indices if index not in indices_to_perturb
+            ]
+            indices_to_perturb = [
+                [[j for i in indices_to_perturb for j in i], x] for x in all_indices
+            ]
+
+    length = len(indices_to_perturb)
+    perturbation_dataset = Dataset.from_dict(
+        {
+            "input_ids": example_cell["input_ids"] * length,
+            "perturb_index": indices_to_perturb,
+        }
+    )
+
+    if length < 400:
+        num_proc_i = 1
+    else:
+        num_proc_i = num_proc
+
+    if perturb_type == "delete":
+        perturbation_dataset = perturbation_dataset.map(
+            delete_indices, num_proc=num_proc_i
+        )
+    elif perturb_type == "overexpress":
+        perturbation_dataset = perturbation_dataset.map(
+                overexpress_indices_special, num_proc=num_proc_i
+        )
 
     perturbation_dataset = perturbation_dataset.map(measure_length, num_proc=num_proc_i)
 
