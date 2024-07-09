@@ -156,12 +156,12 @@ def quant_layers(model):
     return int(max(layer_nums)) + 1
 
 
-def get_model_embedding_dimensions(model):
-    return int(re.split("\(|,", str(model.bert.embeddings.position_embeddings))[2].strip().replace(")", ""))
+def get_model_emb_dims(model):
+    return model.config.hidden_size
 
 
 def get_model_input_size(model):
-    return int(re.split("\(|,", str(model.bert.embeddings.position_embeddings))[1])
+    return model.config.max_position_embeddings
 
 
 def flatten_list(megalist):
