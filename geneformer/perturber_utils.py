@@ -155,9 +155,11 @@ def quant_layers(model):
             layer_nums += [int(name.split("layer.")[1].split(".")[0])]
     return int(max(layer_nums)) + 1
 
-def get_model_embedding_dimensions(model):
-    return int(re.split("\(|,", str(model.bert.embeddings.position_embeddings))[2].strip().replace(")", ""))
+def get_model_emb_dims(model):
+    return model.config.hidden_size
 
+def get_model_input_size(model):
+    return model.config.max_position_embeddings
 
 def get_model_input_size(model):
     return int(re.split("\(|,", str(model.bert.embeddings.position_embeddings))[1])
