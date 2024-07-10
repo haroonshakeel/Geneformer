@@ -161,10 +161,6 @@ def get_model_emb_dims(model):
 def get_model_input_size(model):
     return model.config.max_position_embeddings
 
-def get_model_input_size(model):
-    return int(re.split("\(|,", str(model.bert.embeddings.position_embeddings))[1])
-
-
 def flatten_list(megalist):
     return [item for sublist in megalist for item in sublist]
 
