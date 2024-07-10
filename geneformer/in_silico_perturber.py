@@ -821,17 +821,6 @@ class InSilicoPerturber:
             stored_gene_embs_dict = defaultdict(list)
         for i in trange(len(filtered_input_data)):
             example_cell = filtered_input_data.select([i])
-            full_original_emb = get_embs(
-                model,
-                example_cell,
-                "gene",
-                layer_to_quant,
-                self.pad_token_id,
-                self.forward_batch_size,
-                self.token_gene_dict,
-                summary_stat=None,
-                silent=True,
-            )
 
             # gene_list is used to assign cos sims back to genes
             # need to remove the anchor gene
@@ -839,6 +828,9 @@ class InSilicoPerturber:
             if self.anchor_token is not None:
                 for token in self.anchor_token:
                     gene_list.remove(token)
+            else:
+                if self.perturb_type == "overexpress":
+                    gene_list = gene_list[1:]
 
             perturbation_batch, indices_to_perturb = pu.make_perturbation_batch(
                 example_cell,
@@ -861,6 +853,8 @@ class InSilicoPerturber:
                 silent=True,
             )
 
+            del perturbation_batch
+
             num_inds_perturbed = 1 + self.combos
             
             if self.perturb_type == "overexpress":
@@ -868,11 +862,22 @@ class InSilicoPerturber:
             elif self.perturb_type == "delete":
                 perturbation_emb = full_perturbation_emb
 
-            original_batch = pu.make_comparison_batch(
-                full_original_emb, indices_to_perturb, perturb_group=False
+            full_original_emb = get_embs(
+                model,
+                example_cell,
+                "gene",
+                layer_to_quant,
+                self.pad_token_id,
+                self.forward_batch_size,
+                self.token_gene_dict,
+                summary_stat=None,
+                silent=True,
             )
 
             if self.cell_states_to_model is None or self.emb_mode == "cell_and_gene":
+                original_batch = pu.make_comparison_batch(
+                    full_original_emb, indices_to_perturb, perturb_group=False
+                )
                 gene_cos_sims = pu.quant_cos_sims(
                     perturbation_emb,
                     original_batch,
@@ -880,6 +885,7 @@ class InSilicoPerturber:
                     self.state_embs_dict,
                     emb_mode="gene",
                 )
+                del original_batch
 
             if self.cell_states_to_model is not None:
                 original_cell_emb = pu.compute_nonpadded_cell_embedding(
@@ -896,6 +902,8 @@ class InSilicoPerturber:
                     self.state_embs_dict,
                     emb_mode="cell",
                 )
+                del original_cell_emb
+                del perturbation_cell_emb
 
             if self.emb_mode == "cell_and_gene":
                 # remove perturbed index for gene list
@@ -916,6 +924,9 @@ class InSilicoPerturber:
                             stored_gene_embs_dict[
                                 (perturbed_gene, affected_gene)
                             ] = gene_cos_sims[perturbation_i, gene_j].item()
+
+            del full_original_emb
+            del full_perturbation_emb
 
             if self.cell_states_to_model is None:
                 cos_sims_data = torch.mean(gene_cos_sims, dim=1)
@@ -963,12 +974,6 @@ class InSilicoPerturber:
                 if self.emb_mode == "cell_and_gene":
                     stored_gene_embs_dict = defaultdict(list)
 
-                del full_original_emb
-                del perturbation_batch
-                del full_perturbation_emb
-                del perturbation_emb
-                del original_batch
-
                 torch.cuda.empty_cache()
 
         pu.write_perturbation_dictionary(
@@ -1002,29 +1007,23 @@ class InSilicoPerturber:
             stored_gene_embs_dict = defaultdict(list)
         for i in trange(len(filtered_input_data)):
             example_cell = filtered_input_data.select([i])
-            full_original_emb = get_embs(
-                model,
-                example_cell,
-                "gene",
-                layer_to_quant,
-                self.pad_token_id,
-                self.forward_batch_size,
-                self.token_gene_dict,
-                summary_stat=None,
-                silent=True,
-            )
-
+            
             # gene_list is used to assign cos sims back to genes
             # need to remove the anchor gene
             gene_list = example_cell["input_ids"][0][:]
-            if self.anchor_token is not None:
-                for token in self.anchor_token:
-                    gene_list.remove(token)
-
-            # Also exclude special token from gene_list
             if self.special_token:
                 for token in [self.cls_token_id, self.eos_token_id]:
                     gene_list.remove(token)
+                    
+            if self.anchor_token is not None:
+                for token in self.anchor_token:
+                    gene_list.remove(token)
+            else:
+                if self.perturb_type == "overexpress":
+                    gene_list = gene_list[1:]
+
+            # Also exclude special token from gene_list
+           
 
             perturbation_batch, indices_to_perturb = pu.make_perturbation_batch_special(
                 example_cell,
@@ -1034,102 +1033,171 @@ class InSilicoPerturber:
                 self.combos,
                 self.nproc,
             )
-
-            full_perturbation_emb = get_embs(
-                model,
-                perturbation_batch,
-                "gene",
-                layer_to_quant,
-                self.pad_token_id,
-                self.forward_batch_size,
-                self.token_gene_dict,
-                summary_stat=None,
-                silent=True,
-            )
-
-            num_inds_perturbed = 1 + self.combos
-            
-            # need to remove overexpressed gene and cls/eos to quantify cosine shifts
-            if self.perturb_type == "overexpress":
-                perturbation_emb = full_perturbation_emb[:, 1+num_inds_perturbed:-1, :]
-            elif self.perturb_type == "delete":
-                perturbation_emb = full_perturbation_emb[:, 1:-1, :]
-
-            original_batch = pu.make_comparison_batch(
-                full_original_emb, indices_to_perturb, perturb_group=False
-            )
-
-            original_batch = original_batch[:, 1:-1, :]
-
-            if self.cell_states_to_model is None or self.emb_mode == "cls_and_gene":
-                gene_cos_sims = pu.quant_cos_sims(
-                    perturbation_emb,
-                    original_batch,
-                    self.cell_states_to_model,
-                    self.state_embs_dict,
-                    emb_mode="gene",
+            if self.emb_mode == "cls":
+                perturbation_cls_emb = get_embs(
+                    model,
+                    perturbation_batch,
+                    "cls",
+                    layer_to_quant,
+                    self.pad_token_id,
+                    self.forward_batch_size,
+                    self.token_gene_dict,
+                    summary_stat=None,
+                    silent=True,
                 )
-
-            if self.cell_states_to_model is not None:
-                # get cls emb
-                original_cell_emb = full_original_emb[:,0,:]
-                perturbation_cell_emb = full_perturbation_emb[:,0,:]
-
-                cell_cos_sims = pu.quant_cos_sims(
-                    perturbation_cell_emb,
-                    original_cell_emb,
-                    self.cell_states_to_model,
-                    self.state_embs_dict,
-                    emb_mode="cell",
+                
+                original_cls_emb = get_embs(
+                    model,
+                    example_cell,
+                    "cls",
+                    layer_to_quant,
+                    self.pad_token_id,
+                    self.forward_batch_size,
+                    self.token_gene_dict,
+                    summary_stat=None,
+                    silent=True,
                 )
+                
+                if self.cell_states_to_model is None:
+                    cos_sims_data = pu.quant_cos_sims(
+                        perturbation_cls_emb,
+                        original_cls_emb,
+                        self.cell_states_to_model,
+                        self.state_embs_dict,
+                        emb_mode="cell",
+                    )
 
-            if self.emb_mode == "cls_and_gene":
-                # remove perturbed index for gene list
-                perturbed_gene_dict = {
-                    gene: gene_list[:i] + gene_list[i + 1 :]
-                    for i, gene in enumerate(gene_list)
-                }
-
-                for perturbation_i, perturbed_gene in enumerate(gene_list):
-                    for gene_j, affected_gene in enumerate(
-                        perturbed_gene_dict[perturbed_gene]
-                    ):
-                        try:
-                            stored_gene_embs_dict[
-                                (perturbed_gene, affected_gene)
-                            ].append(gene_cos_sims[perturbation_i, gene_j].item())
-                        except KeyError:
-                            stored_gene_embs_dict[
-                                (perturbed_gene, affected_gene)
-                            ] = gene_cos_sims[perturbation_i, gene_j].item()
-
-            if self.cell_states_to_model is None:
-                original_cls_emb = full_original_emb[:,0,:]
-                perturbation_cls_emb = full_perturbation_emb[:,0,:]
-                cos_sims_data = pu.quant_cos_sims(
-                    perturbation_cls_emb,
-                    original_cls_emb,
-                    self.cell_states_to_model,
-                    self.state_embs_dict,
-                    emb_mode="cell",
-                )
-                cos_sims_dict = self.update_perturbation_dictionary(
-                    cos_sims_dict,
-                    cos_sims_data,
-                    filtered_input_data,
-                    indices_to_perturb,
-                    gene_list,
-                )
-            else:
-                cos_sims_data = cell_cos_sims
-                for state in cos_sims_dict.keys():
-                    cos_sims_dict[state] = self.update_perturbation_dictionary(
-                        cos_sims_dict[state],
-                        cos_sims_data[state],
+                    cos_sims_dict = self.update_perturbation_dictionary(
+                        cos_sims_dict,
+                        cos_sims_data,
                         filtered_input_data,
                         indices_to_perturb,
                         gene_list,
                     )
+                else:
+                    cos_sims_data = cell_cos_sims
+                    for state in cos_sims_dict.keys():
+                        cos_sims_dict[state] = self.update_perturbation_dictionary(
+                            cos_sims_dict[state],
+                            cos_sims_data[state],
+                            filtered_input_data,
+                            indices_to_perturb,
+                            gene_list,
+                        )
+            else:
+                full_perturbation_emb = get_embs(
+                    model,
+                    perturbation_batch,
+                    "gene",
+                    layer_to_quant,
+                    self.pad_token_id,
+                    self.forward_batch_size,
+                    self.token_gene_dict,
+                    summary_stat=None,
+                    silent=True,
+                )
+                del perturbation_batch
+                num_inds_perturbed = 1 + self.combos
+                
+                # need to remove overexpressed gene and cls/eos to quantify cosine shifts
+                if self.perturb_type == "overexpress":
+                    perturbation_emb = full_perturbation_emb[:, 1+num_inds_perturbed:-1, :]
+                elif self.perturb_type == "delete":
+                    perturbation_emb = full_perturbation_emb[:, 1:-1, :]
+
+                full_original_emb = get_embs(
+                    model,
+                    example_cell,
+                    "gene",
+                    layer_to_quant,
+                    self.pad_token_id,
+                    self.forward_batch_size,
+                    self.token_gene_dict,
+                    summary_stat=None,
+                    silent=True,
+                )
+
+                if self.cell_states_to_model is None or self.emb_mode == "cls_and_gene":
+                    original_batch = pu.make_comparison_batch(
+                        full_original_emb, indices_to_perturb, perturb_group=False
+                    )
+
+                    original_batch = original_batch[:, 1:-1, :]
+                    gene_cos_sims = pu.quant_cos_sims(
+                        perturbation_emb,
+                        original_batch,
+                        self.cell_states_to_model,
+                        self.state_embs_dict,
+                        emb_mode="gene",
+                    )
+                    del perturbation_emb
+                    del original_batch
+
+                if self.cell_states_to_model is not None:
+                    # get cls emb
+                    original_cls_emb = full_original_emb[:,0,:]
+                    perturbation_cls_emb = full_perturbation_emb[:,0,:]
+
+                    cell_cos_sims = pu.quant_cos_sims(
+                        perturbation_cls_emb,
+                        original_cls_emb,
+                        self.cell_states_to_model,
+                        self.state_embs_dict,
+                        emb_mode="cell",
+                    )
+                    del original_cls_emb
+                    del perturbation_cls_emb
+
+                if self.emb_mode == "cls_and_gene":
+                    # remove perturbed index for gene list
+                    perturbed_gene_dict = {
+                        gene: gene_list[:i] + gene_list[i + 1 :]
+                        for i, gene in enumerate(gene_list)
+                    }
+
+                    for perturbation_i, perturbed_gene in enumerate(gene_list):
+                        for gene_j, affected_gene in enumerate(
+                            perturbed_gene_dict[perturbed_gene]
+                        ):
+                            try:
+                                stored_gene_embs_dict[
+                                    (perturbed_gene, affected_gene)
+                                ].append(gene_cos_sims[perturbation_i, gene_j].item())
+                            except KeyError:
+                                stored_gene_embs_dict[
+                                    (perturbed_gene, affected_gene)
+                                ] = gene_cos_sims[perturbation_i, gene_j].item()
+
+                if self.cell_states_to_model is None:
+                    original_cls_emb = full_original_emb[:,0,:]
+                    perturbation_cls_emb = full_perturbation_emb[:,0,:]
+                    cos_sims_data = pu.quant_cos_sims(
+                        perturbation_cls_emb,
+                        original_cls_emb,
+                        self.cell_states_to_model,
+                        self.state_embs_dict,
+                        emb_mode="cell",
+                    )
+                    del original_cls_emb
+                    del perturbation_cls_emb
+
+                    cos_sims_dict = self.update_perturbation_dictionary(
+                        cos_sims_dict,
+                        cos_sims_data,
+                        filtered_input_data,
+                        indices_to_perturb,
+                        gene_list,
+                    )
+                else:
+                    cos_sims_data = cell_cos_sims
+                    for state in cos_sims_dict.keys():
+                        cos_sims_dict[state] = self.update_perturbation_dictionary(
+                            cos_sims_dict[state],
+                            cos_sims_data[state],
+                            filtered_input_data,
+                            indices_to_perturb,
+                            gene_list,
+                        )
 
             # save dict to disk every 100 cells
             if i % self.clear_mem_ncells/10 == 0:
@@ -1157,11 +1225,6 @@ class InSilicoPerturber:
                 if self.emb_mode == "cls_and_gene":
                     stored_gene_embs_dict = defaultdict(list)
 
-                del full_original_emb
-                del perturbation_batch
-                del full_perturbation_emb
-                del perturbation_emb
-                del original_batch
                 torch.cuda.empty_cache()
 
         pu.write_perturbation_dictionary(
