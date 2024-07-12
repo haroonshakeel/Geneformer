@@ -1300,7 +1300,6 @@ class InSilicoPerturber:
                     summary_stat=None,
                     silent=True,
                 )
-                print("TESTINGGGG")
                 
                 # need to remove overexpressed gene and cls/eos to quantify cosine shifts
                 if self.perturb_type == "overexpress":
@@ -1387,8 +1386,6 @@ class InSilicoPerturber:
                 del perturbation_cls_emb
                 del cls_cos_sims
                 del gene_cos_sims
-                print("test")
-                print(dir())
 
             # save dict to disk every self.clear_mem_ncells/10 (default 100) cells
             if i % max(1,self.clear_mem_ncells/10) == 0:
