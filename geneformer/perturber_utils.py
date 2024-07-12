@@ -23,8 +23,6 @@ TOKEN_DICTIONARY_FILE = Path(__file__).parent / "token_dictionary.pkl"
 ENSEMBL_DICTIONARY_FILE = Path(__file__).parent / "gene_name_id_dict.pkl"
 
 
-sns.set()
-
 logger = logging.getLogger(__name__)
 
 
@@ -155,11 +153,14 @@ def quant_layers(model):
             layer_nums += [int(name.split("layer.")[1].split(".")[0])]
     return int(max(layer_nums)) + 1
 
+
 def get_model_emb_dims(model):
     return model.config.hidden_size
 
+
 def get_model_input_size(model):
     return model.config.max_position_embeddings
+
 
 def flatten_list(megalist):
     return [item for sublist in megalist for item in sublist]
@@ -357,7 +358,7 @@ def make_perturbation_batch(
         elif perturb_type in ["delete", "inhibit"]:
             range_start = 0
         indices_to_perturb = [
-                [i] for i in range(range_start, example_cell["length"][0])
+            [i] for i in range(range_start, example_cell["length"][0])
         ]
     # elif combo_lvl > 0 and anchor_token is None:
     ## to implement
@@ -412,7 +413,7 @@ def make_perturbation_batch(
         )
     elif perturb_type == "overexpress":
         perturbation_dataset = perturbation_dataset.map(
-                overexpress_indices, num_proc=num_proc_i
+            overexpress_indices, num_proc=num_proc_i
         )
 
     perturbation_dataset = perturbation_dataset.map(measure_length, num_proc=num_proc_i)
@@ -443,7 +444,7 @@ def make_perturbation_batch_special(
             for i in range(1, example_cell["length"][0]-1) # Exclude CLS and EOS tokens
         ]
         indices_to_perturb = [item for item in indices_to_perturb if item is not None]
-    else: # still need to update 
+    else:
         example_input_ids = example_cell["input_ids"][0]
         indices_to_perturb = [
             [example_input_ids.index(token)] if token in example_input_ids else None
@@ -452,7 +453,6 @@ def make_perturbation_batch_special(
         indices_to_perturb = [item for item in indices_to_perturb if item is not None]
 
     # create all permutations of combo_lvl of modifiers from tokens_to_perturb
-    # still need to update
     if combo_lvl > 0 and (anchor_token is None):
         if tokens_to_perturb != "all":
             if len(tokens_to_perturb) == combo_lvl + 1:
@@ -495,7 +495,7 @@ def make_perturbation_batch_special(
     return perturbation_dataset, indices_to_perturb
 
 
-# perturbed cell emb removing the activated/overexpressed/inhibited gene emb
+# original cell emb removing the activated/overexpressed/inhibited gene emb
 # so that only non-perturbed gene embeddings are compared to each other
 # in original or perturbed context
 def make_comparison_batch(original_emb_batch, indices_to_perturb, perturb_group):
