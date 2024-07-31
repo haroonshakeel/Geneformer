@@ -36,14 +36,21 @@ Geneformer tokenizer.
 
 from __future__ import annotations
 
+import os
 import logging
 import pickle
+import sys
 import warnings
 from pathlib import Path
 from typing import Literal
+from tqdm import tqdm
+from collections import Counter
 
-import anndata as ad
 import numpy as np
+import scanpy as sc
+import loompy as lp
+import pandas as pd
+import anndata as ad
 import scipy.sparse as sp
 from datasets import Dataset
 
@@ -52,7 +59,7 @@ import loompy as lp  # noqa
 
 logger = logging.getLogger(__name__)
 
-from .perturber_utils import GENE_MEDIAN_FILE, TOKEN_DICTIONARY_FILE
+from .perturber_utils import GENE_MEDIAN_FILE, TOKEN_DICTIONARY_FILE, ENSEMBL_DICTIONARY_FILE
 
 
 def rank_genes(gene_vector, gene_tokens):
@@ -74,6 +81,115 @@ def tokenize_cell(gene_vector, gene_tokens):
     # rank by median-scaled gene values
     return rank_genes(gene_vector[nonzero_mask], gene_tokens[nonzero_mask])
 
+def sum_ensembl_ids(data_directory,
+                    gene_mapping_dict,
+                    file_format = "loom",
+                    chunk_size = 512):
+    if file_format == "loom":
+        """ 
+        Map Ensembl IDs from gene mapping dictionary. If duplicate Ensembl IDs are found, sum counts together.
+        """
+        with lp.connect(data_directory) as data:
+            assert "ensembl_id" in data.ra.keys(), "'ensembl_id' column missing from data.ra.keys()"
+            gene_ids_collapsed = [gene_mapping_dict.get(gene_id.upper()) for gene_id in data.ra.ensembl_id]
+            
+            if len(set(gene_ids_collapsed)) == len(set(data.ra.ensembl_id)):
+                return data_directory
+            
+            else:
+                dedup_filename = data_directory.with_name(data_directory.stem + "__dedup.loom")
+                dup_genes = [idx for idx, count in Counter(data.ra["ensembl_id"]).items() if count > 1]
+                num_chunks = int(np.ceil(data.shape[1] / chunk_size))
+                first_chunk = True
+                for _, _, view in tqdm(data.scan(axis = 1, batch_size = chunk_size), total = num_chunks):
+                    def process_chunk(view, duplic_genes):
+                        data_count_view = pd.DataFrame(view, index=data.ra["ensembl_id"])
+                        unique_data_df = data_count_view.loc[~data_count_view.index.isin(duplic_genes)]
+                        dup_data_df = data_count_view.loc[data_count_view.index.isin(duplic_genes)]
+                        summed_data = dup_data_df.groupby(dup_data_df.index).sum()
+                        if not summed_data.index.is_unique:
+                            raise ValueError("Error: summed data frame non-unique.")
+                        data_count_view = pd.concat([unique_data_df, summed_data], axis=0)
+                        if not data_count_view.index.is_unique:
+                            raise ValueError("Error: final data frame non-unique.")
+                        return data_count_view
+                    processed_chunk = process_chunk(view[:, :], dup_genes)
+                    processed_array = processed_chunk.to_numpy()
+                    new_row_attrs = {"ensembl_id": processed_chunk.index.to_numpy()}
+
+                    ra_keys = [k for k in data.ra.keys() if k != "ensembl_id"]
+                    for ra_value in ra_keys:
+                        mapping_dict = dict(zip(data.ra["ensembl_id"], data.ra[ra_value]))
+                        values_new = [mapping_dict[i] for i in processed_chunk.index]
+                        new_row_attrs[ra_value] = np.array(values_new)
+
+                    if "n_counts" not in view.ca.keys():
+                        total_count_view = np.sum(view[:,:], axis=0).astype(int)
+                        view.ca["n_counts"] = total_count_view
+
+                    if first_chunk: # Create the Loom file with the first chunk
+                        lp.create(f"{dedup_filename}", processed_array, row_attrs=new_row_attrs, col_attrs=view.ca)
+                        first_chunk = False
+                    else: # Append subsequent chunks
+                        with lp.connect(dedup_filename, mode='r+') as dsout:
+                            dsout.add_columns(processed_array, col_attrs=view.ca)
+                return dedup_filename
+                
+    elif file_format == "h5ad":
+        """
+        Map Ensembl IDs from gene mapping dictionary. If duplicate Ensembl IDs are found, sum counts together.
+        Returns adata object with deduplicated Ensembl IDs.
+        """
+
+        data = sc.read_h5ad(str(data_directory))
+
+        assert "ensembl_id" in data.var.columns, "'ensembl_id' column missing from data.var"
+
+        gene_ids_collapsed = [gene_mapping_dict.get(gene_id.upper()) for gene_id in data.var.ensembl_id]
+
+        if len(set(gene_ids_collapsed)) == len(set(data.var.ensembl_id)):
+            return data
+        
+        else:
+            data.var["gene_ids_collapsed"] = gene_ids_collapsed
+            data.var_names = gene_ids_collapsed
+            data = data[:, ~data.var.index.isna()]
+            dup_genes = [idx for idx, count in Counter(data.var_names).items() if count > 1]
+
+            num_chunks = int(np.ceil(data.shape[0] / chunk_size))
+
+            processed_genes = []
+            for i in tqdm(range(num_chunks)):
+                
+                start_idx = i * chunk_size
+                end_idx = min((i + 1) * chunk_size, data.shape[0])
+                data_chunk = data[start_idx:end_idx, :]
+
+                processed_chunks = []
+                for dup_gene in dup_genes:
+                    data_dup_gene = data_chunk[:, data_chunk.var_names == dup_gene]
+                    df = pd.DataFrame.sparse.from_spmatrix(data_dup_gene.X,
+                                                           index=data_dup_gene.obs_names,
+                                                           columns=data_dup_gene.var_names)
+                    df_sum = pd.DataFrame(df.sum(axis=1))
+                    df_sum.columns = [dup_gene] 
+                    df_sum.index = data_dup_gene.obs.index
+                    processed_chunks.append(df_sum)
+
+                processed_chunks = pd.concat(processed_chunks, axis=1) 
+                processed_genes.append(processed_chunks)
+            processed_genes = pd.concat(processed_genes, axis = 0)
+            var_df = pd.DataFrame({"gene_ids_collapsed" : processed_genes.columns})
+            var_df.index = processed_genes.columns
+            processed_genes = sc.AnnData(X = processed_genes,
+                                        obs = data.obs,
+                                        var = var_df)
+
+            data_dedup = data[:, ~data.var.index.isin(dup_genes)] # Deduplicated data
+            data_dedup = sc.concat([data_dedup, processed_genes], axis = 1)
+            data_dedup.obs = data.obs
+            data_dedup.var = data_dedup.var.rename(columns = {"gene_ids_collapsed" : "ensembl_id"})
+            return data_dedup
 
 class TranscriptomeTokenizer:
     def __init__(
@@ -85,6 +201,7 @@ class TranscriptomeTokenizer:
         special_token=False,
         gene_median_file=GENE_MEDIAN_FILE,
         token_dictionary_file=TOKEN_DICTIONARY_FILE,
+        gene_mapping_file=ENSEMBL_DICTIONARY_FILE,
     ):
         """
         Initialize tokenizer.
@@ -103,11 +220,15 @@ class TranscriptomeTokenizer:
             | Max input size of model to truncate input to.
         special_token : bool = False
             | Adds CLS token before and EOS token after rank value encoding.
+        collapse_gene_ids : bool = False
+            | Whether to collapse gene IDs based on gene mapping dictionary.
         gene_median_file : Path
             | Path to pickle file containing dictionary of non-zero median
             | gene expression values across Genecorpus-30M.
         token_dictionary_file : Path
             | Path to pickle file containing token dictionary (Ensembl IDs:token).
+        gene_mapping_file : Path
+            | Path to pickle file containing dictionary for collapsing gene IDs.
 
         """
         # dictionary of custom attributes {output dataset column name: input .loom column name}
@@ -133,6 +254,10 @@ class TranscriptomeTokenizer:
         # load token dictionary (Ensembl IDs:token)
         with open(token_dictionary_file, "rb") as f:
             self.gene_token_dict = pickle.load(f)
+
+        # load gene mappings dictionary (Ensembl IDs:Ensembl ID)
+        with open(gene_mapping_file, "rb") as f:
+            self.gene_mapping_dict = pickle.load(f)
 
         # gene keys for full vocabulary
         self.gene_keys = list(self.gene_token_dict.keys())
@@ -214,7 +339,7 @@ class TranscriptomeTokenizer:
         return tokenized_cells, cell_metadata
 
     def tokenize_anndata(self, adata_file_path, target_sum=10_000):
-        adata = ad.read(adata_file_path, backed="r")
+        adata = sum_ensembl_ids(adata_file_path, self.gene_mapping_dict, file_format = "h5ad", chunk_size = self.chunk_size)
 
         if self.custom_attr_name_dict is not None:
             file_cell_metadata = {
@@ -256,7 +381,8 @@ class TranscriptomeTokenizer:
             idx = filter_pass_loc[i : i + self.chunk_size]
 
             n_counts = adata[idx].obs["n_counts"].values[:, None]
-            X_view = adata[idx, coding_miRNA_loc].X
+            X_view0 = adata[idx,:].X
+            X_view = X_view0[:, coding_miRNA_loc]
             X_norm = X_view / n_counts * target_sum / norm_factor_vector
             X_norm = sp.csr_matrix(X_norm)
 
@@ -279,6 +405,8 @@ class TranscriptomeTokenizer:
             file_cell_metadata = {
                 attr_key: [] for attr_key in self.custom_attr_name_dict.keys()
             }
+
+        loom_file_path = sum_ensembl_ids(loom_file_path, self.gene_mapping_dict, file_format = "loom", chunk_size = self.chunk_size)
 
         with lp.connect(str(loom_file_path)) as data:
             # define coordinates of detected protein-coding or miRNA genes and vector of their normalization factors
@@ -340,6 +468,9 @@ class TranscriptomeTokenizer:
                         file_cell_metadata[k] += subview.ca[k].tolist()
                 else:
                     file_cell_metadata = None
+
+        if "__dedup" in str(loom_file_path):
+            os.remove(str(loom_file_path))
 
         return tokenized_cells, file_cell_metadata
 
