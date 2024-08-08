@@ -1,37 +1,23 @@
 """
 Geneformer tokenizer.
-
 **Input data:**
-
 | *Required format:* raw counts scRNAseq data without feature selection as .loom or anndata file.
 | *Required row (gene) attribute:* "ensembl_id"; Ensembl ID for each gene.
 | *Required col (cell) attribute:* "n_counts"; total read counts in that cell.
-
 | *Optional col (cell) attribute:* "filter_pass"; binary indicator of whether cell should be tokenized based on user-defined filtering criteria.
 | *Optional col (cell) attributes:* any other cell metadata can be passed on to the tokenized dataset as a custom attribute dictionary as shown below.
-
 **Usage:**
-
 .. code-block :: python
-
     >>> from geneformer import TranscriptomeTokenizer
     >>> tk = TranscriptomeTokenizer({"cell_type": "cell_type", "organ_major": "organ"}, nproc=4)
     >>> tk.tokenize_data("data_directory", "output_directory", "output_prefix")
-
 **Description:**
-
 | Input data is a directory with .loom or .h5ad files containing raw counts from single cell RNAseq data, including all genes detected in the transcriptome without feature selection. The input file type is specified by the argument file_format in the tokenize_data function.
-
 | The discussion below references the .loom file format, but the analagous labels are required for .h5ad files, just that they will be column instead of row attributes and vice versa due to the transposed format of the two file types.
-
 | Genes should be labeled with Ensembl IDs (loom row attribute "ensembl_id"), which provide a unique identifer for conversion to tokens. Other forms of gene annotations (e.g. gene names) can be converted to Ensembl IDs via Ensembl Biomart. Cells should be labeled with the total read count in the cell (loom column attribute "n_counts") to be used for normalization.
-
 | No cell metadata is required, but custom cell attributes may be passed onto the tokenized dataset by providing a dictionary of custom attributes to be added, which is formatted as loom_col_attr_name : desired_dataset_col_attr_name. For example, if the original .loom dataset has column attributes "cell_type" and "organ_major" and one would like to retain these attributes as labels in the tokenized dataset with the new names "cell_type" and "organ", respectively, the following custom attribute dictionary should be provided: {"cell_type": "cell_type", "organ_major": "organ"}.
-
 | Additionally, if the original .loom file contains a cell column attribute called "filter_pass", this column will be used as a binary indicator of whether to include these cells in the tokenized data. All cells with "1" in this attribute will be tokenized, whereas the others will be excluded. One may use this column to indicate QC filtering or other criteria for selection for inclusion in the final tokenized dataset.
-
 | If one's data is in other formats besides .loom or .h5ad, one can use the relevant tools (such as Anndata tools) to convert the file to a .loom or .h5ad format prior to running the transcriptome tokenizer.
-
 """
 
 from __future__ import annotations
@@ -39,7 +25,6 @@ from __future__ import annotations
 import os
 import logging
 import pickle
-import sys
 import warnings
 from pathlib import Path
 from typing import Literal
@@ -50,7 +35,6 @@ import numpy as np
 import scanpy as sc
 import loompy as lp
 import pandas as pd
-import anndata as ad
 import scipy.sparse as sp
 from datasets import Dataset
 
@@ -82,22 +66,38 @@ def tokenize_cell(gene_vector, gene_tokens):
     return rank_genes(gene_vector[nonzero_mask], gene_tokens[nonzero_mask])
 
 def sum_ensembl_ids(data_directory,
+                    collapse_gene_ids,
                     gene_mapping_dict,
+                    gene_token_dict,
                     file_format = "loom",
                     chunk_size = 512):
+
     if file_format == "loom":
         """ 
         Map Ensembl IDs from gene mapping dictionary. If duplicate Ensembl IDs are found, sum counts together.
         """
         with lp.connect(data_directory) as data:
             assert "ensembl_id" in data.ra.keys(), "'ensembl_id' column missing from data.ra.keys()"
+            gene_ids_in_dict = [gene for gene in data.ra.ensembl_id if gene in gene_token_dict.keys()]
+            if len(gene_ids_in_dict) == len(set(gene_ids_in_dict)):
+                token_genes_unique = True
+            else:
+                token_genes_unique = False
+            if collapse_gene_ids is False:
+                if token_genes_unique:
+                    return data_directory
+                else:
+                    raise ValueError("Error: data Ensembl IDs non-unique.")
+
             gene_ids_collapsed = [gene_mapping_dict.get(gene_id.upper()) for gene_id in data.ra.ensembl_id]
-            
-            if len(set(gene_ids_collapsed)) == len(set(data.ra.ensembl_id)):
+            gene_ids_collapsed_in_dict = [gene for gene in gene_ids_collapsed if gene in gene_token_dict.keys()]
+
+            if (len(set(gene_ids_collapsed_in_dict)) == len(set(gene_ids_in_dict))) and token_genes_unique:
                 return data_directory
             
             else:
                 dedup_filename = data_directory.with_name(data_directory.stem + "__dedup.loom")
+                data.ra["ensembl_id"] = [gene_mapping_dict.get(gene_id, gene_id) for gene_id in data.ra.ensembl_id]
                 dup_genes = [idx for idx, count in Counter(data.ra["ensembl_id"]).items() if count > 1]
                 num_chunks = int(np.ceil(data.shape[1] / chunk_size))
                 first_chunk = True
@@ -108,10 +108,10 @@ def sum_ensembl_ids(data_directory,
                         dup_data_df = data_count_view.loc[data_count_view.index.isin(duplic_genes)]
                         summed_data = dup_data_df.groupby(dup_data_df.index).sum()
                         if not summed_data.index.is_unique:
-                            raise ValueError("Error: summed data frame non-unique.")
+                            raise ValueError("Error: Ensembl IDs in summed data frame non-unique.")
                         data_count_view = pd.concat([unique_data_df, summed_data], axis=0)
                         if not data_count_view.index.is_unique:
-                            raise ValueError("Error: final data frame non-unique.")
+                            raise ValueError("Error: Ensembl IDs in final data frame non-unique.")
                         return data_count_view
                     processed_chunk = process_chunk(view[:, :], dup_genes)
                     processed_array = processed_chunk.to_numpy()
@@ -144,10 +144,20 @@ def sum_ensembl_ids(data_directory,
         data = sc.read_h5ad(str(data_directory))
 
         assert "ensembl_id" in data.var.columns, "'ensembl_id' column missing from data.var"
+        gene_ids_in_dict = [gene for gene in data.var.ensembl_id if gene in gene_token_dict.keys()]
+        if len(gene_ids_in_dict) == len(set(gene_ids_in_dict)):
+            token_genes_unique = True
+        else:
+            token_genes_unique = False
+        if collapse_gene_ids is False:
+            if token_genes_unique:
+                return data
+            else:
+                raise ValueError("Error: data Ensembl IDs non-unique.")
 
         gene_ids_collapsed = [gene_mapping_dict.get(gene_id.upper()) for gene_id in data.var.ensembl_id]
-
-        if len(set(gene_ids_collapsed)) == len(set(data.var.ensembl_id)):
+        gene_ids_collapsed_in_dict = [gene for gene in gene_ids_collapsed if gene in gene_token_dict.keys()]
+        if (len(set(gene_ids_collapsed_in_dict)) == len(set(gene_ids_in_dict))) and token_genes_unique:
             return data
         
         else:
@@ -199,15 +209,14 @@ class TranscriptomeTokenizer:
         chunk_size=512,
         model_input_size=2048,
         special_token=False,
+        collapse_gene_ids=True,
         gene_median_file=GENE_MEDIAN_FILE,
         token_dictionary_file=TOKEN_DICTIONARY_FILE,
         gene_mapping_file=ENSEMBL_MAPPING_FILE,
     ):
         """
         Initialize tokenizer.
-
         **Parameters:**
-
         custom_attr_name_dict : None, dict
             | Dictionary of custom attributes to be added to the dataset.
             | Keys are the names of the attributes in the loom file.
@@ -220,16 +229,15 @@ class TranscriptomeTokenizer:
             | Max input size of model to truncate input to.
         special_token : bool = False
             | Adds CLS token before and EOS token after rank value encoding.
-        collapse_gene_ids : bool = False
+        collapse_gene_ids : bool = True
             | Whether to collapse gene IDs based on gene mapping dictionary.
         gene_median_file : Path
             | Path to pickle file containing dictionary of non-zero median
             | gene expression values across Genecorpus-30M.
         token_dictionary_file : Path
             | Path to pickle file containing token dictionary (Ensembl IDs:token).
-        gene_mapping_file : Path
+        gene_mapping_file : None, Path
             | Path to pickle file containing dictionary for collapsing gene IDs.
-
         """
         # dictionary of custom attributes {output dataset column name: input .loom column name}
         self.custom_attr_name_dict = custom_attr_name_dict
@@ -255,9 +263,15 @@ class TranscriptomeTokenizer:
         with open(token_dictionary_file, "rb") as f:
             self.gene_token_dict = pickle.load(f)
 
+        # if collapsing duplicate gene IDs
+        self.collapse_gene_ids = collapse_gene_ids
+
         # load gene mappings dictionary (Ensembl IDs:Ensembl ID)
-        with open(gene_mapping_file, "rb") as f:
-            self.gene_mapping_dict = pickle.load(f)
+        if gene_mapping_file is not None:
+            with open(gene_mapping_file, "rb") as f:
+                self.gene_mapping_dict = pickle.load(f)
+        else:
+            self.gene_mapping_dict = {k:k for k,_ in self.gene_token_dict.items()}
 
         # gene keys for full vocabulary
         self.gene_keys = list(self.gene_token_dict.keys())
@@ -275,9 +289,7 @@ class TranscriptomeTokenizer:
     ):
         """
         Tokenize .loom files in data_directory and save as tokenized .dataset in output_directory.
-
         **Parameters:**
-
         data_directory : Path
             | Path to directory containing loom files or anndata files
         output_directory : Path
@@ -288,7 +300,6 @@ class TranscriptomeTokenizer:
             | Format of input files. Can be "loom" or "h5ad".
         use_generator : bool
             | Whether to use generator or dict for tokenization.
-
         """
         tokenized_cells, cell_metadata = self.tokenize_files(
             Path(data_directory), file_format
@@ -339,7 +350,7 @@ class TranscriptomeTokenizer:
         return tokenized_cells, cell_metadata
 
     def tokenize_anndata(self, adata_file_path, target_sum=10_000):
-        adata = sum_ensembl_ids(adata_file_path, self.gene_mapping_dict, file_format = "h5ad", chunk_size = self.chunk_size)
+        adata = sum_ensembl_ids(adata_file_path, self.collapse_gene_ids, self.gene_mapping_dict, self.gene_token_dict, file_format = "h5ad", chunk_size = self.chunk_size)
 
         if self.custom_attr_name_dict is not None:
             file_cell_metadata = {
@@ -406,7 +417,8 @@ class TranscriptomeTokenizer:
                 attr_key: [] for attr_key in self.custom_attr_name_dict.keys()
             }
 
-        loom_file_path = sum_ensembl_ids(loom_file_path, self.gene_mapping_dict, file_format = "loom", chunk_size = self.chunk_size)
+        dedup_filename = loom_file_path.with_name(loom_file_path.stem + "__dedup.loom")
+        loom_file_path = sum_ensembl_ids(loom_file_path, self.collapse_gene_ids, self.gene_mapping_dict, self.gene_token_dict, file_format = "loom", chunk_size = self.chunk_size)
 
         with lp.connect(str(loom_file_path)) as data:
             # define coordinates of detected protein-coding or miRNA genes and vector of their normalization factors
@@ -469,8 +481,8 @@ class TranscriptomeTokenizer:
                 else:
                     file_cell_metadata = None
 
-        if "__dedup" in str(loom_file_path):
-            os.remove(str(loom_file_path))
+        if str(dedup_filename) == str(loom_file_path):
+            os.remove(str(dedup_filename))
 
         return tokenized_cells, file_cell_metadata
 
