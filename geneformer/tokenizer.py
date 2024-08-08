@@ -276,6 +276,9 @@ class TranscriptomeTokenizer:
         # gene keys for full vocabulary
         self.gene_keys = list(self.gene_token_dict.keys())
 
+        #  Filter gene mapping dict for items that exist in gene_token_dict
+        self.gene_mapping_dict = {k: v for k, v in self.gene_mapping_dict.items() if v in self.gene_keys}
+
         # protein-coding and miRNA gene list dictionary for selecting .loom rows for tokenization
         self.genelist_dict = dict(zip(self.gene_keys, [True] * len(self.gene_keys)))
 
