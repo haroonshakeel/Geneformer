@@ -94,18 +94,17 @@ def sum_ensembl_ids(data_directory,
 
             if (len(set(gene_ids_collapsed_in_dict)) == len(set(gene_ids_in_dict))) and token_genes_unique:
                 return data_directory
-            
             else:
                 dedup_filename = data_directory.with_name(data_directory.stem + "__dedup.loom")
-                data.ra["ensembl_id"] = [gene_mapping_dict.get(gene_id, gene_id) for gene_id in data.ra.ensembl_id]
-                dup_genes = [idx for idx, count in Counter(data.ra["ensembl_id"]).items() if count > 1]
+                data.ra["gene_ids_collapsed"] = gene_ids_collapsed
+                dup_genes = [idx for idx, count in Counter(data.ra["gene_ids_collapsed"]).items() if count > 1]
                 num_chunks = int(np.ceil(data.shape[1] / chunk_size))
                 first_chunk = True
                 for _, _, view in tqdm(data.scan(axis = 1, batch_size = chunk_size), total = num_chunks):
                     def process_chunk(view, duplic_genes):
-                        data_count_view = pd.DataFrame(view, index=data.ra["ensembl_id"])
+                        data_count_view = pd.DataFrame(view, index=data.ra["gene_ids_collapsed"])
                         unique_data_df = data_count_view.loc[~data_count_view.index.isin(duplic_genes)]
-                        dup_data_df = data_count_view.loc[data_count_view.index.isin(duplic_genes)]
+                        dup_data_df = data_count_view.loc[data_count_view.index.isin([i for i in duplic_genes if "None" not in i])]
                         summed_data = dup_data_df.groupby(dup_data_df.index).sum()
                         if not summed_data.index.is_unique:
                             raise ValueError("Error: Ensembl IDs in summed data frame non-unique.")
@@ -116,12 +115,6 @@ def sum_ensembl_ids(data_directory,
                     processed_chunk = process_chunk(view[:, :], dup_genes)
                     processed_array = processed_chunk.to_numpy()
                     new_row_attrs = {"ensembl_id": processed_chunk.index.to_numpy()}
-
-                    ra_keys = [k for k in data.ra.keys() if k != "ensembl_id"]
-                    for ra_value in ra_keys:
-                        mapping_dict = dict(zip(data.ra["ensembl_id"], data.ra[ra_value]))
-                        values_new = [mapping_dict[i] for i in processed_chunk.index]
-                        new_row_attrs[ra_value] = np.array(values_new)
 
                     if "n_counts" not in view.ca.keys():
                         total_count_view = np.sum(view[:,:], axis=0).astype(int)
@@ -263,6 +256,14 @@ class TranscriptomeTokenizer:
         with open(token_dictionary_file, "rb") as f:
             self.gene_token_dict = pickle.load(f)
 
+        # check for special token in gene_token_dict
+        if self.special_token:
+            if ("<cls>" not in self.gene_token_dict.keys()) and ("<eos>" not in self.gene_token_dict.keys()):
+                logger.error(
+                            "<cls> and <eos> required in gene_token_dict when special_token = True."
+                        )
+                raise
+
         # if collapsing duplicate gene IDs
         self.collapse_gene_ids = collapse_gene_ids
 
@@ -277,7 +278,8 @@ class TranscriptomeTokenizer:
         self.gene_keys = list(self.gene_token_dict.keys())
 
         #  Filter gene mapping dict for items that exist in gene_token_dict
-        self.gene_mapping_dict = {k: v for k, v in self.gene_mapping_dict.items() if v in self.gene_keys}
+        gene_keys_set = set(self.gene_token_dict.keys())
+        self.gene_mapping_dict = {k: v for k, v in self.gene_mapping_dict.items() if v in gene_keys_set}
 
         # protein-coding and miRNA gene list dictionary for selecting .loom rows for tokenization
         self.genelist_dict = dict(zip(self.gene_keys, [True] * len(self.gene_keys)))
