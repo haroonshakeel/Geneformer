@@ -4,7 +4,7 @@ from pathlib import Path
 GENE_MEDIAN_FILE = Path(__file__).parent / "gene_median_dictionary.pkl"
 TOKEN_DICTIONARY_FILE = Path(__file__).parent / "token_dictionary.pkl"
 ENSEMBL_DICTIONARY_FILE = Path(__file__).parent / "gene_name_id_dict.pkl"
-ENSEMBL_MAPPING_FILE = Path(__file__).parent / "ensembl_mapping_dict_gc95M.pickle"
+ENSEMBL_MAPPING_FILE = Path(__file__).parent / "ensembl_mapping_dict.pkl"
 
 from . import (
     collator_for_classification,
