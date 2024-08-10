@@ -30,3 +30,5 @@ model.safetensors filter=lfs diff=lfs merge=lfs -text
 geneformer/ensembl_mapping_dict_gc95M.pickle filter=lfs diff=lfs merge=lfs -text
 ensembl_mapping_dict.pkl filter=lfs diff=lfs merge=lfs -text
 geneformer/gene_name_id_dict_gc95M.pkl filter=lfs diff=lfs merge=lfs -text
+geneformer/ensembl_mapping_dict_gc95M.pkl filter=lfs diff=lfs merge=lfs -text
+geneformer/gene_median_dictionary_gc95M.pkl filter=lfs diff=lfs merge=lfs -text
