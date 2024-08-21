@@ -344,18 +344,18 @@ class MTLClassifier:
 
         eval_utils.load_and_evaluate_test_model(self.config)
 
-    def save_model_without_heads(
-        self,
-    ):
-        """
-        Save previously fine-tuned multi-task model without classification heads.
-        """
+    # def save_model_without_heads(
+    #     self,
+    # ):
+    #     """
+    #     Save previously fine-tuned multi-task model without classification heads.
+    #     """
 
-        required_variable_names = ["model_save_path"]
-        required_variables = [self.model_save_path]
-        req_var_dict = dict(zip(required_variable_names, required_variables))
-        self.validate_additional_options(req_var_dict)
+    #     required_variable_names = ["model_save_path"]
+    #     required_variables = [self.model_save_path]
+    #     req_var_dict = dict(zip(required_variable_names, required_variables))
+    #     self.validate_additional_options(req_var_dict)
 
-        utils.save_model_without_heads(
-            os.path.join(self.model_save_path, "GeneformerMultiTask")
-        )
+    #     utils.save_model_without_heads(
+    #         os.path.join(self.model_save_path, "GeneformerMultiTask")
+    #     )
