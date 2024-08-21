@@ -37,7 +37,6 @@ from transformers.utils import logging, to_py_obj
 from .collators import DataCollatorForMultitaskCellClassification
 
 # local modules
-from .data import get_data_loader, preload_and_process_data
 from .model import GeneformerMultiTask
 from .optuna_utils import create_optuna_study
 from .utils import save_model
