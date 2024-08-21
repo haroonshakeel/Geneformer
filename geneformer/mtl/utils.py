@@ -73,44 +73,44 @@ def calculate_combined_f1(combined_labels, combined_preds):
     return f1, accuracy
 
 
-def save_model_without_heads(original_model_save_directory):
-    # Create a new directory for the model without heads
-    new_model_save_directory = original_model_save_directory + "_No_Heads"
-    if not os.path.exists(new_model_save_directory):
-        os.makedirs(new_model_save_directory)
+# def save_model_without_heads(original_model_save_directory):
+#     # Create a new directory for the model without heads
+#     new_model_save_directory = original_model_save_directory + "_No_Heads"
+#     if not os.path.exists(new_model_save_directory):
+#         os.makedirs(new_model_save_directory)
 
-    # Load the model state dictionary
-    model_state_dict = torch.load(
-        os.path.join(original_model_save_directory, "pytorch_model.bin")
-    )
+#     # Load the model state dictionary
+#     model_state_dict = torch.load(
+#         os.path.join(original_model_save_directory, "pytorch_model.bin")
+#     )
 
-    # Initialize a new BERT model without the classification heads
-    config = BertConfig.from_pretrained(
-        os.path.join(original_model_save_directory, "config.json")
-    )
-    model_without_heads = BertModel(config)
+#     # Initialize a new BERT model without the classification heads
+#     config = BertConfig.from_pretrained(
+#         os.path.join(original_model_save_directory, "config.json")
+#     )
+#     model_without_heads = BertModel(config)
 
-    # Filter the state dict to exclude classification heads
-    model_without_heads_state_dict = {
-        k: v
-        for k, v in model_state_dict.items()
-        if not k.startswith("classification_heads")
-    }
+#     # Filter the state dict to exclude classification heads
+#     model_without_heads_state_dict = {
+#         k: v
+#         for k, v in model_state_dict.items()
+#         if not k.startswith("classification_heads")
+#     }
 
-    # Load the filtered state dict into the model
-    model_without_heads.load_state_dict(model_without_heads_state_dict, strict=False)
+#     # Load the filtered state dict into the model
+#     model_without_heads.load_state_dict(model_without_heads_state_dict, strict=False)
 
-    # Save the model without heads
-    model_save_path = os.path.join(new_model_save_directory, "pytorch_model.bin")
-    torch.save(model_without_heads.state_dict(), model_save_path)
+#     # Save the model without heads
+#     model_save_path = os.path.join(new_model_save_directory, "pytorch_model.bin")
+#     torch.save(model_without_heads.state_dict(), model_save_path)
 
-    # Copy the configuration file
-    shutil.copy(
-        os.path.join(original_model_save_directory, "config.json"),
-        new_model_save_directory,
-    )
+#     # Copy the configuration file
+#     shutil.copy(
+#         os.path.join(original_model_save_directory, "config.json"),
+#         new_model_save_directory,
+#     )
 
-    print(f"Model without classification heads saved to {new_model_save_directory}")
+#     print(f"Model without classification heads saved to {new_model_save_directory}")
 
 
 def get_layer_freeze_range(pretrained_path):
