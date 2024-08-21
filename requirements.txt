@@ -8,6 +8,7 @@ optuna>=3.6
 optuna-integration>=3.6
 packaging>=23.0
 pandas>=2.0
+peft>=0.11.1
 pyarrow>=12.0
 pytz>=2023.0
 ray>=2.6
