@@ -60,7 +60,7 @@ class InSilicoPerturber:
         "genes_to_perturb": {"all", list},
         "combos": {0, 1},
         "anchor_gene": {None, str},
-        "model_type": {"Pretrained", "GeneClassifier", "CellClassifier"},
+        "model_type": {"Pretrained", "GeneClassifier", "CellClassifier", "MTLCellClassifier", "MTLCellClassifier-Quantized"},
         "num_classes": {int},
         "emb_mode": {"cls", "cell", "cls_and_gene", "cell_and_gene"},
         "cell_emb_style": {"mean_pool"},
