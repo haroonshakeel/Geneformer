@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from .imports import *
 from .model import GeneformerMultiTask
-from .utils import calculate_task_specific_metrics
+from .utils import calculate_task_specific_metrics, get_layer_freeze_range
 
 
 def set_seed(seed):
@@ -280,7 +280,7 @@ def objective(
         "lr_scheduler_type", config["hyperparameters"]["lr_scheduler_type"]["choices"]
     )
     config["use_attention_pooling"] = trial.suggest_categorical(
-        "use_attention_pooling", [True, False]
+        "use_attention_pooling", [False]
     )
 
     if config["use_task_weights"]:
@@ -299,18 +299,13 @@ def objective(
     else:
         config["task_weights"] = None
 
-    # Fix for max_layers_to_freeze
-    if isinstance(config["max_layers_to_freeze"], dict):
-        config["max_layers_to_freeze"] = trial.suggest_int(
-            "max_layers_to_freeze",
-            config["max_layers_to_freeze"]["min"],
-            config["max_layers_to_freeze"]["max"],
-        )
-    elif isinstance(config["max_layers_to_freeze"], int):
-        # If it's already an int, we don't need to suggest it
-        pass
-    else:
-        raise ValueError("Invalid type for max_layers_to_freeze. Expected dict or int.")
+    # Dynamic range for max_layers_to_freeze
+    freeze_range = get_layer_freeze_range(config["pretrained_path"])
+    config["max_layers_to_freeze"] = trial.suggest_int(
+        "max_layers_to_freeze",
+        freeze_range["min"],
+        freeze_range["max"]
+    )
 
     model = create_model(config, num_labels_list, device)
     total_steps = len(train_loader) * config["epochs"]
