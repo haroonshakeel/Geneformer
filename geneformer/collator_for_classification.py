@@ -1,6 +1,5 @@
 """
 Geneformer collator for gene and cell classification.
-
 Huggingface data collator modified to accommodate single-cell transcriptomics data for gene and cell classification.
 """
 
@@ -85,12 +84,24 @@ class PrecollatorForGeneAndCellClassification(SpecialTokensMixin):
         self.token_dictionary = kwargs.get("token_dictionary")
         self.padding_side = "right"
         self.model_input_names = ["input_ids"]
-        self.mask_token_id = self.token_dictionary.get("<mask>")
-        self.pad_token_id = self.token_dictionary.get("<pad>")
-        self.all_special_ids = [
+        self._mask_token_id = self.token_dictionary.get("<mask>")
+        self._pad_token_id = self.token_dictionary.get("<pad>")
+        self._all_special_ids = [
             self.token_dictionary.get("<mask>"),
             self.token_dictionary.get("<pad>"),
         ]
+
+    @property
+    def all_special_ids(self):
+        return self._all_special_ids
+
+    @property
+    def mask_token_id(self):
+        return self._mask_token_id
+
+    @property
+    def pad_token_id(self):
+        return self._pad_token_id
 
     def _get_padding_truncation_strategies(
         self,
@@ -258,29 +269,23 @@ class PrecollatorForGeneAndCellClassification(SpecialTokensMixin):
         """
         Pad a single encoded input or a batch of encoded inputs up to predefined length or to the max sequence length
         in the batch.
-
         Padding side (left/right) padding token ids are defined at the tokenizer level (with ``self.padding_side``,
         ``self.pad_token_id`` and ``self.pad_token_type_id``)
-
         .. note::
-
             If the ``encoded_inputs`` passed are dictionary of numpy arrays, PyTorch tensors or TensorFlow tensors, the
             result will use the same type unless you provide a different tensor type with ``return_tensors``. In the
             case of PyTorch tensors, you will lose the specific device of your tensors however.
-
         Args:
             encoded_inputs (:class:`~transformers.BatchEncoding`, list of :class:`~transformers.BatchEncoding`, :obj:`Dict[str, List[int]]`, :obj:`Dict[str, List[List[int]]` or :obj:`List[Dict[str, List[int]]]`):
                 Tokenized inputs. Can represent one input (:class:`~transformers.BatchEncoding` or :obj:`Dict[str,
                 List[int]]`) or a batch of tokenized inputs (list of :class:`~transformers.BatchEncoding`, `Dict[str,
                 List[List[int]]]` or `List[Dict[str, List[int]]]`) so you can use this method during preprocessing as
                 well as in a PyTorch Dataloader collate function.
-
                 Instead of :obj:`List[int]` you can have tensors (numpy arrays, PyTorch tensors or TensorFlow tensors),
                 see the note above for the return type.
             padding (:obj:`bool`, :obj:`str` or :class:`~transformers.tokenization_utils_base.PaddingStrategy`, `optional`, defaults to :obj:`True`):
                  Select a strategy to pad the returned sequences (according to the model's padding side and padding
                  index) among:
-
                 * :obj:`True` or :obj:`'longest'`: Pad to the longest sequence in the batch (or no padding if only a
                   single sequence if provided).
                 * :obj:`'max_length'`: Pad to a maximum length specified with the argument :obj:`max_length` or to the
@@ -291,17 +296,14 @@ class PrecollatorForGeneAndCellClassification(SpecialTokensMixin):
                 Maximum length of the returned list and optionally padding length (see above).
             pad_to_multiple_of (:obj:`int`, `optional`):
                 If set will pad the sequence to a multiple of the provided value.
-
                 This is especially useful to enable the use of Tensor Cores on NVIDIA hardware with compute capability
                 >= 7.5 (Volta).
             return_attention_mask (:obj:`bool`, `optional`):
                 Whether to return the attention mask. If left to the default, will return the attention mask according
                 to the specific tokenizer's default, defined by the :obj:`return_outputs` attribute.
-
                 `What are attention masks? <../glossary.html#attention-mask>`__
             return_tensors (:obj:`str` or :class:`~transformers.tokenization_utils_base.TensorType`, `optional`):
                 If set, will return tensors instead of list of python integers. Acceptable values are:
-
                 * :obj:`'tf'`: Return TensorFlow :obj:`tf.constant` objects.
                 * :obj:`'pt'`: Return PyTorch :obj:`torch.Tensor` objects.
                 * :obj:`'np'`: Return Numpy :obj:`np.ndarray` objects.
@@ -418,18 +420,15 @@ class PrecollatorForGeneAndCellClassification(SpecialTokensMixin):
     ) -> dict:
         """
         Pad encoded inputs (on left/right and up to predefined length or max length in the batch)
-
         Args:
             encoded_inputs: Dictionary of tokenized inputs (`List[int]`) or batch of tokenized inputs (`List[List[int]]`).
             max_length: maximum length of the returned list and optionally padding length (see below).
                 Will truncate by taking into account the special tokens.
             padding_strategy: PaddingStrategy to use for padding.
-
                 - PaddingStrategy.LONGEST Pad to the longest sequence in the batch
                 - PaddingStrategy.MAX_LENGTH: Pad to the max length (default)
                 - PaddingStrategy.DO_NOT_PAD: Do not pad
                 The tokenizer padding sides are defined in self.padding_side:
-
                     - 'left': pads on the left of the sequences
                     - 'right': pads on the right of the sequences
             pad_to_multiple_of: (optional) Integer if set will pad the sequence to a multiple of the provided value.
