@@ -1,18 +1,18 @@
 # imports
 import torch
-
 from ..collator_for_classification import DataCollatorForGeneClassification
+from . import TOKEN_DICTIONARY  # import the token dictionary from the mtl module's init
 
 """
 Geneformer collator for multi-task cell classification.
 """
 
-
 class DataCollatorForMultitaskCellClassification(DataCollatorForGeneClassification):
     class_type = "cell"
 
     def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+        # Use the loaded token dictionary from the mtl module's init
+        super().__init__(token_dictionary=TOKEN_DICTIONARY, *args, **kwargs)
 
     def _prepare_batch(self, features):
         # Process inputs as usual
