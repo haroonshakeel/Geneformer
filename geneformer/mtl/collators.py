@@ -1,17 +1,22 @@
 # imports
 import torch
+import pickle
 from ..collator_for_classification import DataCollatorForGeneClassification
-from . import TOKEN_DICTIONARY  # import the token dictionary from the mtl module's init
+from .. import TOKEN_DICTIONARY_FILE
 
-"""
-Geneformer collator for multi-task cell classification.
-"""
+def load_token_dictionary():
+    with open(TOKEN_DICTIONARY_FILE, 'rb') as f:
+        return pickle.load(f)
+
+TOKEN_DICTIONARY = load_token_dictionary()
+
+"""Geneformer collator for multi-task cell classification."""
 
 class DataCollatorForMultitaskCellClassification(DataCollatorForGeneClassification):
     class_type = "cell"
 
     def __init__(self, *args, **kwargs) -> None:
-        # Use the loaded token dictionary from the mtl module's init
+        # Use the loaded token dictionary
         super().__init__(token_dictionary=TOKEN_DICTIONARY, *args, **kwargs)
 
     def _prepare_batch(self, features):
@@ -29,7 +34,6 @@ class DataCollatorForMultitaskCellClassification(DataCollatorForGeneClassificati
         if "label" in features[0]:
             # Initialize labels dictionary for all tasks
             labels = {task: [] for task in features[0]["label"].keys()}
-
             # Populate labels for each task
             for feature in features:
                 for task, label in feature["label"].items():
@@ -57,7 +61,6 @@ class DataCollatorForMultitaskCellClassification(DataCollatorForGeneClassificati
 
     def __call__(self, features):
         batch = self._prepare_batch(features)
-
         for k, v in batch.items():
             if torch.is_tensor(v):
                 batch[k] = v.clone().detach()
@@ -69,5 +72,4 @@ class DataCollatorForMultitaskCellClassification(DataCollatorForGeneClassificati
                 }
             else:
                 batch[k] = torch.tensor(v, dtype=torch.int64)
-
         return batch
