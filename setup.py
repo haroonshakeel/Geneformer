@@ -34,6 +34,7 @@ setup(
         "setuptools",
         "statsmodels",
         "tdigest",
+        "tensorboard",
         "torch",
         "tqdm",
         "transformers",
