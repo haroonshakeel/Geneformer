@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
     name="geneformer",
@@ -10,7 +10,7 @@ setup(
                  cell transcriptomes to enable context-aware \
                  predictions in settings with limited data in \
                  network biology.",
-    packages=["geneformer"],
+    packages=find_packages(),
     python_requires=">=3.10",
     include_package_data=True,
     install_requires=[
