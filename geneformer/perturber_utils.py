@@ -117,83 +117,73 @@ def load_model(model_type, num_classes, model_directory, mode, quantize=False):
         model_type = "MTLCellClassifier"
         quantize = True
 
-    if mode == "eval":
-        output_hidden_states = True
-    elif mode == "train":
-        output_hidden_states = False
+    output_hidden_states = (mode == "eval")
 
-    if quantize is True:
+    # Quantization logic
+    if quantize:
         if model_type == "MTLCellClassifier":
-            quantize = {
-                "peft_config": None,
-                "bnb_config": BitsAndBytesConfig(
-                    load_in_8bit=True,
-                ),
-            }
+            quantize_config = BitsAndBytesConfig(load_in_8bit=True)
+            peft_config = None
         else:
-            quantize = {
-                "peft_config": LoraConfig(
-                    lora_alpha=128,
-                    lora_dropout=0.1,
-                    r=64,
-                    bias="none",
-                    task_type="TokenClassification",
-                ),
-                "bnb_config": BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_use_double_quant=True,
-                    bnb_4bit_quant_type="nf4",
-                    bnb_4bit_compute_dtype=torch.bfloat16,
-                ),
-            }
-    elif quantize is False:
-        quantize = {"bnb_config": None}
+            quantize_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+            )
+            peft_config = LoraConfig(
+                lora_alpha=128,
+                lora_dropout=0.1,
+                r=64,
+                bias="none",
+                task_type="TokenClassification",
+            )
+    else:
+        quantize_config = None
+        peft_config = None
 
-    if model_type == "Pretrained":
-        model = BertForMaskedLM.from_pretrained(
-            model_directory,
-            output_hidden_states=output_hidden_states,
-            output_attentions=False,
-            quantization_config=quantize["bnb_config"],
-        )
-    elif model_type == "GeneClassifier":
-        model = BertForTokenClassification.from_pretrained(
-            model_directory,
-            num_labels=num_classes,
-            output_hidden_states=output_hidden_states,
-            output_attentions=False,
-            quantization_config=quantize["bnb_config"],
-        )
-    elif model_type == "CellClassifier":
-        model = BertForSequenceClassification.from_pretrained(
-            model_directory,
-            num_labels=num_classes,
-            output_hidden_states=output_hidden_states,
-            output_attentions=False,
-            quantization_config=quantize["bnb_config"],
-        )
-    elif model_type == "MTLCellClassifier":
-        model = BertForMaskedLM.from_pretrained(
-            model_directory,
-            num_labels=num_classes,
-            output_hidden_states=output_hidden_states,
-            output_attentions=False,
-            quantization_config=quantize["bnb_config"],
-        )
-    # if eval mode, put the model in eval mode for fwd pass
+    # Model class selection
+    model_classes = {
+        "Pretrained": BertForMaskedLM,
+        "GeneClassifier": BertForTokenClassification,
+        "CellClassifier": BertForSequenceClassification,
+        "MTLCellClassifier": BertForMaskedLM
+    }
+
+    model_class = model_classes.get(model_type)
+    if not model_class:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+    # Model loading
+    model_args = {
+        "pretrained_model_name_or_path": model_directory,
+        "output_hidden_states": output_hidden_states,
+        "output_attentions": False,
+    }
+
+    if model_type != "Pretrained":
+        model_args["num_labels"] = num_classes
+
+    if quantize_config:
+        model_args["quantization_config"] = quantize_config
+
+    # Load the model
+    model = model_class.from_pretrained(**model_args)
+
     if mode == "eval":
         model.eval()
-    if (
-        (quantize is False)
-        or (quantize == {"bnb_config": None})
-        or (model_type == "MTLCellClassifier")
-    ):
-        model = model.to("cuda")
-    else:
-        model.enable_input_require_grads()
-        model = get_peft_model(model, quantize["peft_config"])
-    return model
 
+    # Handle device placement and PEFT
+    if not quantize:
+        # Only move non-quantized models
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = model.to(device)
+    elif peft_config:
+        # Apply PEFT for quantized models (except MTLCellClassifier)
+        model.enable_input_require_grads()
+        model = get_peft_model(model, peft_config)
+
+    return model
 
 def quant_layers(model):
     layer_nums = []
