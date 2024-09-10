@@ -63,6 +63,16 @@ logger = logging.getLogger(__name__)
 
 from . import ENSEMBL_MAPPING_FILE, GENE_MEDIAN_FILE, TOKEN_DICTIONARY_FILE
 
+def rename_attr(data_ra_or_ca, old_name, new_name):
+    """ Rename attributes
+    Args:
+        data_ra_or_ca: data as a record array or column attribute
+        old_name (str): old name of attribute
+        new_name (str): new name of attribute
+    """
+    data_ra_or_ca[new_name] = data_ra_or_ca[old_name]
+    if new_name != old_name:
+        del data_ra_or_ca[old_name]
 
 def rank_genes(gene_vector, gene_tokens):
     """
@@ -100,15 +110,15 @@ def sum_ensembl_ids(
             assert (
                 "ensembl_id" in data.ra.keys()
             ), "'ensembl_id' column missing from data.ra.keys()"
+
+            # Check for duplicate Ensembl IDs if collapse_gene_ids is False.
+            # Comparing to gene_token_dict here, would not perform any mapping steps
             gene_ids_in_dict = [
                 gene for gene in data.ra.ensembl_id if gene in gene_token_dict.keys()
             ]
-            if len(gene_ids_in_dict) == len(set(gene_ids_in_dict)):
-                token_genes_unique = True
-            else:
-                token_genes_unique = False
             if collapse_gene_ids is False:
-                if token_genes_unique:
+                
+                if len(gene_ids_in_dict) == len(set(gene_ids_in_dict)):
                     return data_directory
                 else:
                     raise ValueError("Error: data Ensembl IDs non-unique.")
@@ -116,13 +126,11 @@ def sum_ensembl_ids(
             gene_ids_collapsed = [
                 gene_mapping_dict.get(gene_id.upper()) for gene_id in data.ra.ensembl_id
             ]
-            gene_ids_collapsed_in_dict = [
-                gene for gene in gene_ids_collapsed if gene in gene_token_dict.keys()
-            ]
 
-            if (
-                len(set(gene_ids_collapsed_in_dict)) == len(set(gene_ids_in_dict))
-            ) and token_genes_unique:
+            if len(set(gene_ids_in_dict)) == len(set(gene_ids_collapsed)):
+                # Keep original Ensembl IDs as `ensembl_id_original`
+                rename_attr(data.ra, "ensembl_id", "ensembl_id_original")
+                data.ra["ensembl_id"] = gene_ids_collapsed
                 return data_directory
             else:
                 dedup_filename = data_directory.with_name(
@@ -198,28 +206,25 @@ def sum_ensembl_ids(
         assert (
             "ensembl_id" in data.var.columns
         ), "'ensembl_id' column missing from data.var"
+
+        # Check for duplicate Ensembl IDs if collapse_gene_ids is False.
+        # Comparing to gene_token_dict here, would not perform any mapping steps
         gene_ids_in_dict = [
             gene for gene in data.var.ensembl_id if gene in gene_token_dict.keys()
         ]
-        if len(gene_ids_in_dict) == len(set(gene_ids_in_dict)):
-            token_genes_unique = True
-        else:
-            token_genes_unique = False
         if collapse_gene_ids is False:
-            if token_genes_unique:
+            
+            if len(gene_ids_in_dict) == len(set(gene_ids_in_dict)):
                 return data
             else:
                 raise ValueError("Error: data Ensembl IDs non-unique.")
 
+        # Check for when if collapse_gene_ids is True
         gene_ids_collapsed = [
             gene_mapping_dict.get(gene_id.upper()) for gene_id in data.var.ensembl_id
         ]
-        gene_ids_collapsed_in_dict = [
-            gene for gene in gene_ids_collapsed if gene in gene_token_dict.keys()
-        ]
-        if (
-            len(set(gene_ids_collapsed_in_dict)) == len(set(gene_ids_in_dict))
-        ) and token_genes_unique:
+        if len(set(gene_ids_in_dict)) == len(set(gene_ids_collapsed)):
+            data.var.ensembl_id = data.var.ensembl_id.map(gene_mapping_dict)
             return data
 
         else:
