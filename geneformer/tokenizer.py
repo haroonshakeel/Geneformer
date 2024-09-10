@@ -126,8 +126,11 @@ def sum_ensembl_ids(
             gene_ids_collapsed = [
                 gene_mapping_dict.get(gene_id.upper()) for gene_id in data.ra.ensembl_id
             ]
+            gene_ids_collapsed_in_dict = [
+                gene for gene in gene_ids_collapsed if gene in gene_token_dict.keys()
+            ]
 
-            if len(set(gene_ids_in_dict)) == len(set(gene_ids_collapsed)):
+            if len(set(gene_ids_in_dict)) == len(set(gene_ids_collapsed_in_dict)):
                 # Keep original Ensembl IDs as `ensembl_id_original`
                 rename_attr(data.ra, "ensembl_id", "ensembl_id_original")
                 data.ra["ensembl_id"] = gene_ids_collapsed
@@ -223,7 +226,10 @@ def sum_ensembl_ids(
         gene_ids_collapsed = [
             gene_mapping_dict.get(gene_id.upper()) for gene_id in data.var.ensembl_id
         ]
-        if len(set(gene_ids_in_dict)) == len(set(gene_ids_collapsed)):
+        gene_ids_collapsed_in_dict = [
+            gene for gene in gene_ids_collapsed if gene in gene_token_dict.keys()
+        ]
+        if len(set(gene_ids_in_dict)) == len(set(gene_ids_collapsed_in_dict)):
             data.var.ensembl_id = data.var.ensembl_id.map(gene_mapping_dict)
             return data
 
