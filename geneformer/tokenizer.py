@@ -100,6 +100,9 @@ def sum_ensembl_ids(
                 "ensembl_id" in data.ra.keys()
             ), "'ensembl_id' column missing from data.ra.keys()"
 
+            assert (
+                "ensembl_id_collapsed" not in data.ra.keys()
+            ), "'ensembl_id_collapsed' column already exists in data.ra.keys()"
             # Check for duplicate Ensembl IDs if collapse_gene_ids is False.
             # Comparing to gene_token_dict here, would not perform any mapping steps
             gene_ids_in_dict = [
@@ -196,6 +199,10 @@ def sum_ensembl_ids(
         assert (
             "ensembl_id" in data.var.columns
         ), "'ensembl_id' column missing from data.var"
+
+        assert (
+            "ensembl_id_collapsed" not in data.var.columns
+        ), "'ensembl_id_collapsed' column already exists in data.var"
 
         # Check for duplicate Ensembl IDs if collapse_gene_ids is False.
         # Comparing to gene_token_dict here, would not perform any mapping steps
@@ -516,6 +523,7 @@ class TranscriptomeTokenizer:
             file_cell_metadata = {
                 attr_key: [] for attr_key in self.custom_attr_name_dict.keys()
             }
+        loom_file_path_original = loom_file_path
 
         dedup_filename = loom_file_path.with_name(loom_file_path.stem + "__dedup.loom")
         loom_file_path = sum_ensembl_ids(
@@ -590,6 +598,11 @@ class TranscriptomeTokenizer:
 
         if str(dedup_filename) == str(loom_file_path):
             os.remove(str(dedup_filename))
+
+        with lp.connect(str(loom_file_path_original)) as data:
+            if "ensembl_id_collapsed" in data.ra.keys():
+                del data.ra["ensembl_id_collapsed"]
+
 
         return tokenized_cells, file_cell_metadata
 
