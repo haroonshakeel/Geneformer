@@ -63,17 +63,6 @@ logger = logging.getLogger(__name__)
 
 from . import ENSEMBL_MAPPING_FILE, GENE_MEDIAN_FILE, TOKEN_DICTIONARY_FILE
 
-def rename_attr(data_ra_or_ca, old_name, new_name):
-    """ Rename attributes
-    Args:
-        data_ra_or_ca: data as a record array or column attribute
-        old_name (str): old name of attribute
-        new_name (str): new name of attribute
-    """
-    data_ra_or_ca[new_name] = data_ra_or_ca[old_name]
-    if new_name != old_name:
-        del data_ra_or_ca[old_name]
-
 def rank_genes(gene_vector, gene_tokens):
     """
     Rank gene expression vector.
@@ -131,18 +120,16 @@ def sum_ensembl_ids(
             ]
 
             if len(set(gene_ids_in_dict)) == len(set(gene_ids_collapsed_in_dict)):
-                # Keep original Ensembl IDs as `ensembl_id_original`
-                rename_attr(data.ra, "ensembl_id", "ensembl_id_original")
-                data.ra["ensembl_id"] = gene_ids_collapsed
+                data.ra["ensembl_id_collapsed"] = gene_ids_collapsed
                 return data_directory
             else:
                 dedup_filename = data_directory.with_name(
                     data_directory.stem + "__dedup.loom"
                 )
-                data.ra["gene_ids_collapsed"] = gene_ids_collapsed
+                data.ra["ensembl_id_collapsed"] = gene_ids_collapsed
                 dup_genes = [
                     idx
-                    for idx, count in Counter(data.ra["gene_ids_collapsed"]).items()
+                    for idx, count in Counter(data.ra["ensembl_id_collapsed"]).items()
                     if count > 1
                 ]
                 num_chunks = int(np.ceil(data.shape[1] / chunk_size))
@@ -153,7 +140,7 @@ def sum_ensembl_ids(
 
                     def process_chunk(view, duplic_genes):
                         data_count_view = pd.DataFrame(
-                            view, index=data.ra["gene_ids_collapsed"]
+                            view, index=data.ra["ensembl_id_collapsed"]
                         )
                         unique_data_df = data_count_view.loc[
                             ~data_count_view.index.isin(duplic_genes)
@@ -179,7 +166,7 @@ def sum_ensembl_ids(
 
                     processed_chunk = process_chunk(view[:, :], dup_genes)
                     processed_array = processed_chunk.to_numpy()
-                    new_row_attrs = {"ensembl_id": processed_chunk.index.to_numpy()}
+                    new_row_attrs = {"ensembl_id_collapsed": processed_chunk.index.to_numpy()}
 
                     if "n_counts" not in view.ca.keys():
                         total_count_view = np.sum(view[:, :], axis=0).astype(int)
@@ -230,11 +217,11 @@ def sum_ensembl_ids(
             gene for gene in gene_ids_collapsed if gene in gene_token_dict.keys()
         ]
         if len(set(gene_ids_in_dict)) == len(set(gene_ids_collapsed_in_dict)):
-            data.var.ensembl_id = data.var.ensembl_id.map(gene_mapping_dict)
+            data.var["ensembl_id_collapsed"] = data.var.ensembl_id.map(gene_mapping_dict)
             return data
 
         else:
-            data.var["gene_ids_collapsed"] = gene_ids_collapsed
+            data.var["ensembl_id_collapsed"] = gene_ids_collapsed
             data.var_names = gene_ids_collapsed
             data = data[:, ~data.var.index.isna()]
             dup_genes = [
@@ -265,16 +252,13 @@ def sum_ensembl_ids(
                 processed_chunks = pd.concat(processed_chunks, axis=1)
                 processed_genes.append(processed_chunks)
             processed_genes = pd.concat(processed_genes, axis=0)
-            var_df = pd.DataFrame({"gene_ids_collapsed": processed_genes.columns})
+            var_df = pd.DataFrame({"ensembl_id_collapsed": processed_genes.columns})
             var_df.index = processed_genes.columns
             processed_genes = sc.AnnData(X=processed_genes, obs=data.obs, var=var_df)
 
             data_dedup = data[:, ~data.var.index.isin(dup_genes)]  # Deduplicated data
             data_dedup = sc.concat([data_dedup, processed_genes], axis=1)
             data_dedup.obs = data.obs
-            data_dedup.var = data_dedup.var.rename(
-                columns={"gene_ids_collapsed": "ensembl_id"}
-            )
             return data_dedup
 
 
@@ -474,15 +458,15 @@ class TranscriptomeTokenizer:
             }
 
         coding_miRNA_loc = np.where(
-            [self.genelist_dict.get(i, False) for i in adata.var["ensembl_id"]]
+            [self.genelist_dict.get(i, False) for i in adata.var["ensembl_id_collapsed"]]
         )[0]
         norm_factor_vector = np.array(
             [
                 self.gene_median_dict[i]
-                for i in adata.var["ensembl_id"][coding_miRNA_loc]
+                for i in adata.var["ensembl_id_collapsed"][coding_miRNA_loc]
             ]
         )
-        coding_miRNA_ids = adata.var["ensembl_id"][coding_miRNA_loc]
+        coding_miRNA_ids = adata.var["ensembl_id_collapsed"][coding_miRNA_loc]
         coding_miRNA_tokens = np.array(
             [self.gene_token_dict[i] for i in coding_miRNA_ids]
         )
@@ -546,15 +530,15 @@ class TranscriptomeTokenizer:
         with lp.connect(str(loom_file_path)) as data:
             # define coordinates of detected protein-coding or miRNA genes and vector of their normalization factors
             coding_miRNA_loc = np.where(
-                [self.genelist_dict.get(i, False) for i in data.ra["ensembl_id"]]
+                [self.genelist_dict.get(i, False) for i in data.ra["ensembl_id_collapsed"]]
             )[0]
             norm_factor_vector = np.array(
                 [
                     self.gene_median_dict[i]
-                    for i in data.ra["ensembl_id"][coding_miRNA_loc]
+                    for i in data.ra["ensembl_id_collapsed"][coding_miRNA_loc]
                 ]
             )
-            coding_miRNA_ids = data.ra["ensembl_id"][coding_miRNA_loc]
+            coding_miRNA_ids = data.ra["ensembl_id_collapsed"][coding_miRNA_loc]
             coding_miRNA_tokens = np.array(
                 [self.gene_token_dict[i] for i in coding_miRNA_ids]
             )
