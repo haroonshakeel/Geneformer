@@ -1142,7 +1142,7 @@ class Classifier:
                 metric="eval_macro_f1",
                 metric_columns=["loss", "eval_loss", "eval_accuracy", "eval_macro_f1"],
             ),
-            local_dir=output_directory,
+            storage_path=output_directory,
         )
 
         return trainer
