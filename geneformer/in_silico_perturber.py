@@ -40,7 +40,7 @@ import pickle
 from collections import defaultdict
 
 import torch
-from datasets import Dataset, disable_progress_bars
+from datasets import Dataset
 from multiprocess import set_start_method
 from tqdm.auto import trange
 
@@ -48,7 +48,9 @@ from . import TOKEN_DICTIONARY_FILE
 from . import perturber_utils as pu
 from .emb_extractor import get_embs
 
-disable_progress_bars()
+import datasets
+datasets.logging.disable_progress_bar()
+
 
 logger = logging.getLogger(__name__)
 
@@ -794,6 +796,8 @@ class InSilicoPerturber:
             return example
 
         total_batch_length = len(filtered_input_data)
+
+    
         if self.cell_states_to_model is None:
             cos_sims_dict = defaultdict(list)
         else:
@@ -878,7 +882,7 @@ class InSilicoPerturber:
                         )
 
             ##### CLS and Gene Embedding Mode #####
-            elif self.emb_mode == "cls_and_gene":
+            elif self.emb_mode == "cls_and_gene":              
                 full_original_emb = get_embs(
                     model,
                     minibatch,
@@ -891,6 +895,7 @@ class InSilicoPerturber:
                     silent=True,
                 )
                 indices_to_perturb = perturbation_batch["perturb_index"]
+
                 # remove indices that were perturbed
                 original_emb = pu.remove_perturbed_indices_set(
                     full_original_emb,
@@ -899,6 +904,7 @@ class InSilicoPerturber:
                     self.tokens_to_perturb,
                     minibatch["length"],
                 )
+
                 full_perturbation_emb = get_embs(
                     model,
                     perturbation_batch,
@@ -910,7 +916,7 @@ class InSilicoPerturber:
                     summary_stat=None,
                     silent=True,
                 )
-
+    
                 # remove special tokens and padding
                 original_emb = original_emb[:, 1:-1, :]
                 if self.perturb_type == "overexpress":
@@ -921,9 +927,25 @@ class InSilicoPerturber:
                     perturbation_emb = full_perturbation_emb[
                         :, 1 : max(perturbation_batch["length"]) - 1, :
                     ]
-
+    
                 n_perturbation_genes = perturbation_emb.size()[1]
 
+                # truncate the original embedding as necessary
+                if self.perturb_type == "overexpress":
+                    def calc_perturbation_length(ids):
+                        if ids == [-100]:
+                            return 0
+                        else:
+                            return len(ids)
+
+                    max_tensor_size = max([length - calc_perturbation_length(ids) - 2 for length, ids in zip(minibatch["length"], indices_to_perturb)])
+
+                    max_n_overflow = max(minibatch["n_overflow"])
+                    if max_n_overflow > 0 and perturbation_emb.size()[1] < original_emb.size()[1]:
+                        original_emb = original_emb[:, 0 : perturbation_emb.size()[1], :]
+                    elif perturbation_emb.size()[1] < original_emb.size()[1]:
+                        original_emb = original_emb[:, 0:max_tensor_size, :]
+    
                 gene_cos_sims = pu.quant_cos_sims(
                     perturbation_emb,
                     original_emb,
