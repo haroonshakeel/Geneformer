@@ -103,33 +103,35 @@ def sum_ensembl_ids(
             assert (
                 "ensembl_id_collapsed" not in data.ra.keys()
             ), "'ensembl_id_collapsed' column already exists in data.ra.keys()"
+            
+
+            # Get the ensembl ids that exist in data
+            ensembl_ids = data.ra.ensembl_id
             # Check for duplicate Ensembl IDs if collapse_gene_ids is False.
             # Comparing to gene_token_dict here, would not perform any mapping steps
-            gene_ids_in_dict = [
-                gene for gene in data.ra.ensembl_id if gene in gene_token_dict.keys()
-            ]
-            if collapse_gene_ids is False:
-                
-                if len(gene_ids_in_dict) == len(set(gene_ids_in_dict)):
+            if not collapse_gene_ids:
+                if len(ensembl_ids) == len(set(ensembl_ids)):
                     return data_directory
                 else:
                     raise ValueError("Error: data Ensembl IDs non-unique.")
+    
+            # Get the genes that exist in the mapping dictionary and the value of those genes
+            genes_in_map_dict = [gene for gene in ensembl_ids if gene in gene_mapping_dict.keys()]
+            vals_from_map_dict = [gene_mapping_dict.get(gene) for gene in genes_in_map_dict]
 
-            gene_ids_collapsed = [
-                gene_mapping_dict.get(gene_id.upper()) for gene_id in data.ra.ensembl_id
-            ]
-            gene_ids_collapsed_in_dict = [
-                gene for gene in gene_ids_collapsed if gene in gene_token_dict.keys()
-            ]
-
-            if len(set(gene_ids_in_dict)) == len(set(gene_ids_collapsed_in_dict)):
-                data.ra["ensembl_id_collapsed"] = gene_ids_collapsed
+            # if the genes in the mapping dict and the value of those genes are of the same length,
+            # simply return the mapped values
+            if(len(set(genes_in_map_dict)) == len(set(vals_from_map_dict))):
+                mapped_vals = [gene_mapping_dict.get(gene.upper()) for gene in data.ra["ensembl_id"]]
+                data.ra["ensembl_id_collapsed"] = mapped_vals
                 return data_directory
+            # Genes need to be collapsed
             else:
                 dedup_filename = data_directory.with_name(
                     data_directory.stem + "__dedup.loom"
                 )
-                data.ra["ensembl_id_collapsed"] = gene_ids_collapsed
+                mapped_vals = [gene_mapping_dict.get(gene.upper()) for gene in data.ra["ensembl_id"]]
+                data.ra["ensembl_id_collapsed"] = mapped_vals
                 dup_genes = [
                     idx
                     for idx, count in Counter(data.ra["ensembl_id_collapsed"]).items()
@@ -204,32 +206,30 @@ def sum_ensembl_ids(
             "ensembl_id_collapsed" not in data.var.columns
         ), "'ensembl_id_collapsed' column already exists in data.var"
 
+
+        # Get the ensembl ids that exist in data
+        ensembl_ids = data.var.ensembl_id
         # Check for duplicate Ensembl IDs if collapse_gene_ids is False.
         # Comparing to gene_token_dict here, would not perform any mapping steps
-        gene_ids_in_dict = [
-            gene for gene in data.var.ensembl_id if gene in gene_token_dict.keys()
-        ]
-        if collapse_gene_ids is False:
-            
-            if len(gene_ids_in_dict) == len(set(gene_ids_in_dict)):
-                return data
+        if not collapse_gene_ids:
+            if len(ensembl_ids) == len(set(ensembl_ids)):
+                return data_directory
             else:
                 raise ValueError("Error: data Ensembl IDs non-unique.")
 
-        # Check for when if collapse_gene_ids is True
-        gene_ids_collapsed = [
-            gene_mapping_dict.get(gene_id.upper()) for gene_id in data.var.ensembl_id
-        ]
-        gene_ids_collapsed_in_dict = [
-            gene for gene in gene_ids_collapsed if gene in gene_token_dict.keys()
-        ]
-        if len(set(gene_ids_in_dict)) == len(set(gene_ids_collapsed_in_dict)):
-            data.var["ensembl_id_collapsed"] = data.var.ensembl_id.map(gene_mapping_dict)
-            return data
+        # Get the genes that exist in the mapping dictionary and the value of those genes
+        genes_in_map_dict = [gene for gene in ensembl_ids if gene in gene_mapping_dict.keys()]
+        vals_from_map_dict = [gene_mapping_dict.get(gene) for gene in genes_in_map_dict]
 
+        # if the genes in the mapping dict and the value of those genes are of the same length,
+        # simply return the mapped values
+        if(len(set(genes_in_map_dict)) == len(set(vals_from_map_dict))):
+            data.var["ensembl_id_collapsed"] = data.var.ensembl_id.str.upper().map(gene_mapping_dict)
+            return data
+        # Genes need to be collapsed
         else:
-            data.var["ensembl_id_collapsed"] = gene_ids_collapsed
-            data.var_names = gene_ids_collapsed
+            data.var["ensembl_id_collapsed"] = data.var.ensembl_id.str.upper().map(gene_mapping_dict)
+            data.var_names = data.var["ensembl_id_collapsed"]
             data = data[:, ~data.var.index.isna()]
             dup_genes = [
                 idx for idx, count in Counter(data.var_names).items() if count > 1
