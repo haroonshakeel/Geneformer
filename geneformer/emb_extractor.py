@@ -411,7 +411,7 @@ class EmbExtractor:
         self,
         model_type="Pretrained",
         num_classes=0,
-        emb_mode="cls",
+        emb_mode="cell",
         cell_emb_style="mean_pool",
         gene_emb_style="mean_pool",
         filter_data=None,
@@ -596,6 +596,12 @@ class EmbExtractor:
         filtered_input_data = pu.load_and_filter(
             self.filter_data, self.nproc, input_data_file
         )
+        
+        # Check to make sure that all the labels exist in the tokenized data:
+        if self.emb_label is not None:
+            for label in self.emb_label:
+                assert label in list(filtered_input_data.features), f"Attribute `{label}` not present in dataset features" 
+
         if cell_state is not None:
             filtered_input_data = pu.filter_by_dict(
                 filtered_input_data, cell_state, self.nproc
@@ -719,12 +725,6 @@ class EmbExtractor:
             )
             raise
 
-        if self.emb_label is not None:
-            logger.error(
-                "For extracting state embs, emb_label should be None since labels are based on state embs dict keys."
-            )
-            raise
-        
         state_embs_dict = dict()
         state_key = cell_states_to_model["state_key"]
         for k, v in cell_states_to_model.items():
