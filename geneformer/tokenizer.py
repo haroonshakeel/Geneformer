@@ -110,7 +110,10 @@ def sum_ensembl_ids(
             # Check for duplicate Ensembl IDs if collapse_gene_ids is False.
             # Comparing to gene_token_dict here, would not perform any mapping steps
             if not collapse_gene_ids:
-                if len(ensembl_ids) == len(set(ensembl_ids)):
+                ensembl_id_check = [
+                    gene for gene in ensembl_ids if gene in gene_token_dict.keys()
+                ]
+                if len(ensembl_id_check) == len(set(ensembl_id_check)):
                     return data_directory
                 else:
                     raise ValueError("Error: data Ensembl IDs non-unique.")
@@ -212,7 +215,10 @@ def sum_ensembl_ids(
         # Check for duplicate Ensembl IDs if collapse_gene_ids is False.
         # Comparing to gene_token_dict here, would not perform any mapping steps
         if not collapse_gene_ids:
-            if len(ensembl_ids) == len(set(ensembl_ids)):
+            ensembl_id_check = [
+                gene for gene in ensembl_ids if gene in gene_token_dict.keys()
+            ]
+            if len(ensembl_id_check) == len(set(ensembl_id_check)):
                 return data_directory
             else:
                 raise ValueError("Error: data Ensembl IDs non-unique.")
