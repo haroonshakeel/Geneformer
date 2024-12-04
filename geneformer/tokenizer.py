@@ -88,6 +88,7 @@ def sum_ensembl_ids(
     collapse_gene_ids,
     gene_mapping_dict,
     gene_token_dict,
+    custom_attr_name_dict,
     file_format="loom",
     chunk_size=512,
 ):
@@ -104,6 +105,13 @@ def sum_ensembl_ids(
                 "ensembl_id_collapsed" not in data.ra.keys()
             ), "'ensembl_id_collapsed' column already exists in data.ra.keys()"
             
+            assert (
+                "n_counts" in data.ca.keys()
+            ), "'n_counts' column missing from data.ca.keys()"
+
+            if custom_attr_name_dict is not None:
+                for label in custom_attr_name_dict:
+                    assert label in data.ca.keys(), f"Attribute `{label}` not present in dataset features"
 
             # Get the ensembl ids that exist in data
             ensembl_ids = data.ra.ensembl_id
@@ -208,6 +216,13 @@ def sum_ensembl_ids(
         assert (
             "ensembl_id_collapsed" not in data.var.columns
         ), "'ensembl_id_collapsed' column already exists in data.var"
+        assert (
+            "n_counts" in data.obs.columns
+        ), "'n_counts' column missing from data.obs"
+
+        if custom_attr_name_dict is not None:
+            for label in custom_attr_name_dict:
+                assert label in data.obs.columns, f"Attribute `{label}` not present in data.obs"
 
 
         # Get the ensembl ids that exist in data
@@ -461,6 +476,7 @@ class TranscriptomeTokenizer:
             self.collapse_gene_ids,
             self.gene_mapping_dict,
             self.gene_token_dict,
+            self.custom_attr_name_dict, 
             file_format="h5ad",
             chunk_size=self.chunk_size,
         )
@@ -537,6 +553,7 @@ class TranscriptomeTokenizer:
             self.collapse_gene_ids,
             self.gene_mapping_dict,
             self.gene_token_dict,
+            self.custom_attr_name_dict,
             file_format="loom",
             chunk_size=self.chunk_size,
         )
