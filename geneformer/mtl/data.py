@@ -112,7 +112,7 @@ def preload_and_process_data(config):
     # Validate that the mappings match
     validate_label_mappings(config)
 
-    return (*train_data, *val_data[:2])  # Return train and val data along with mappings
+    return (*train_data[:2], *val_data)  # Return train and val data along with mappings
 
 
 def validate_label_mappings(config):
