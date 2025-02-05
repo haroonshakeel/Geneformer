@@ -437,14 +437,20 @@ class Classifier:
             )
             # rename cell state column to "label"
             data = cu.rename_cols(data, self.cell_state_dict["state_key"])
+            
+            # convert classes to numerical labels and save as id_class_dict
+            data, id_class_dict = cu.label_classes(
+                self.classifier, data, self.cell_state_dict, self.nproc
+            )
 
+        elif self.classifier == "gene":
         # convert classes to numerical labels and save as id_class_dict
         # of note, will label all genes in gene_class_dict
         # if (cross-)validating, genes will be relabeled in column "labels" for each split
         # at the time of training with Classifier.validate
-        data, id_class_dict = cu.label_classes(
-            self.classifier, data, self.gene_class_dict, self.nproc
-        )
+            data, id_class_dict = cu.label_classes(
+                self.classifier, data, self.gene_class_dict, self.nproc
+            )
 
         # save id_class_dict for future reference
         id_class_output_path = (
