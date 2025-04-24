@@ -127,7 +127,10 @@ def load_model(model_type, num_classes, model_directory, mode, quantize=False):
     output_hidden_states = (mode == "eval")
 
     # Quantization logic
-    if quantize:
+    if isinstance(quantize, dict):
+        quantize_config = quantize.get("bnb_config", None)
+        peft_config = quantize.get("peft_config", None)
+    elif quantize:
         if inference_only:
             quantize_config = BitsAndBytesConfig(load_in_8bit=True)
             peft_config = None
@@ -138,13 +141,22 @@ def load_model(model_type, num_classes, model_directory, mode, quantize=False):
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_compute_dtype=torch.bfloat16,
             )
-            peft_config = LoraConfig(
-                lora_alpha=128,
-                lora_dropout=0.1,
-                r=64,
-                bias="none",
-                task_type="TokenClassification",
-            )
+            try:
+                peft_config = LoraConfig(
+                    lora_alpha=128,
+                    lora_dropout=0.1,
+                    r=64,
+                    bias="none",
+                    task_type="TokenClassification", 
+                )
+            except ValueError as e:
+                peft_config = LoraConfig(
+                    lora_alpha=128,
+                    lora_dropout=0.1,
+                    r=64,
+                    bias="none",
+                    task_type="TOKEN_CLS",
+                )
     else:
         quantize_config = None
         peft_config = None
@@ -181,14 +193,22 @@ def load_model(model_type, num_classes, model_directory, mode, quantize=False):
         model.eval()
 
     # Handle device placement and PEFT
+    adapter_config_path = os.path.join(model_directory, "adapter_config.json")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if not quantize:
         # Only move non-quantized models
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(device)
+    elif os.path.exists(adapter_config_path):
+        # If adapter files exist, load them into the model using PEFT's from_pretrained
+        model = PeftModel.from_pretrained(model, model_directory)
+        model = model.to(device)
+        print("loading lora weights")
     elif peft_config:
         # Apply PEFT for quantized models (except MTLCellClassifier and CellClassifier-QuantInf)
         model.enable_input_require_grads()
         model = get_peft_model(model, peft_config)
+        model = model.to(device)
 
     return model
 
