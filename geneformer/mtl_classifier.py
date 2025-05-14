@@ -29,8 +29,7 @@ Geneformer multi-task cell classifier.
 import logging
 import os
 
-from .mtl import eval_utils, utils
-from .mtl.train import run_manual_tuning, run_optuna_study
+from .mtl import eval_utils, utils, train
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +308,7 @@ class MTLClassifier:
         self.config["manual_hyperparameters"] = self.manual_hyperparameters
         self.config["use_manual_hyperparameters"] = True
 
-        run_manual_tuning(self.config)
+        train.run_manual_tuning(self.config)
 
     def validate_additional_options(self, req_var_dict):
         missing_variable = False
@@ -346,7 +345,7 @@ class MTLClassifier:
         req_var_dict = dict(zip(required_variable_names, required_variables))
         self.validate_additional_options(req_var_dict)
 
-        run_optuna_study(self.config)
+        train.run_optuna_study(self.config)
 
     def load_and_evaluate_test_model(
         self,
