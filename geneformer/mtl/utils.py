@@ -5,7 +5,6 @@ import pickle
 import random
 import torch
 import numpy as np
-import wandb
 import optuna
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.preprocessing import LabelEncoder
@@ -30,6 +29,7 @@ def set_seed(seed):
 
 def initialize_wandb(config):
     if config.get("use_wandb", False):
+        import wandb
         wandb.init(
             project=config.get("wandb_project", "geneformer_multitask"),
             name=config.get("run_name", "experiment"),
