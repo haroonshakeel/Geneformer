@@ -48,11 +48,13 @@ import logging
 import os
 import pickle
 import subprocess
+from packaging.version import parse
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import transformers
 from tqdm.auto import tqdm, trange
 from transformers import Trainer
 from transformers.training_args import TrainingArguments
@@ -71,6 +73,7 @@ sns.set()
 
 logger = logging.getLogger(__name__)
 
+transformers_version = parse(transformers.__version__)
 
 class Classifier:
     valid_option_dict = {
@@ -1060,7 +1063,10 @@ class Classifier:
         def_training_args["logging_steps"] = logging_steps
         def_training_args["output_dir"] = output_directory
         if eval_data is None:
-            def_training_args["evaluation_strategy"] = "no"
+            if transformers_version >= parse("4.46"):
+                def_training_args["eval_strategy"] = "no"
+            else:
+                def_training_args["evaluation_strategy"] = "no"
             def_training_args["load_best_model_at_end"] = False
         def_training_args.update(
             {"save_strategy": "epoch", "save_total_limit": 1}
@@ -1231,7 +1237,10 @@ class Classifier:
         def_training_args["logging_steps"] = logging_steps
         def_training_args["output_dir"] = output_directory
         if eval_data is None:
-            def_training_args["evaluation_strategy"] = "no"
+            if transformers_version >= parse("4.46"):
+                def_training_args["eval_strategy"] = "no"
+            else:
+                def_training_args["evaluation_strategy"] = "no"
             def_training_args["load_best_model_at_end"] = False
         training_args_init = TrainingArguments(**def_training_args)
 
