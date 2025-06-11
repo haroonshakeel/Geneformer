@@ -138,13 +138,20 @@ def load_model(model_type, num_classes, model_directory, mode, quantize=False):
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_compute_dtype=torch.bfloat16,
             )
-            peft_config = LoraConfig(
-                lora_alpha=128,
-                lora_dropout=0.1,
-                r=64,
-                bias="none",
-                task_type="TokenClassification",
-            )
+            # Define common LoraConfig parameters
+            lora_config_params = {
+                "lora_alpha": 128,
+                "lora_dropout": 0.1,
+                "r": 64,
+                "bias": "none"
+            }
+            
+            # Try with TokenClassification first, fallback to TOKEN_CLS if needed
+            try:
+                peft_config = LoraConfig(**lora_config_params, task_type="TokenClassification")
+            except ValueError:
+                # Some versions use TOKEN_CLS instead of TokenClassification
+                peft_config = LoraConfig(**lora_config_params, task_type="TOKEN_CLS")
     else:
         quantize_config = None
         peft_config = None
