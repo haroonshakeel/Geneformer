@@ -1063,11 +1063,10 @@ class Classifier:
         def_training_args["logging_steps"] = logging_steps
         def_training_args["output_dir"] = output_directory
         if eval_data is None:
-            if transformers_version >= parse("4.46"):
-                def_training_args["eval_strategy"] = "no"
-            else:
-                def_training_args["evaluation_strategy"] = "no"
+            def_training_args["evaluation_strategy"] = "no"
             def_training_args["load_best_model_at_end"] = False
+        if transformers_version >= parse("4.46"):
+            def_training_args["eval_strategy"] = def_training_args.pop("evaluation_strategy")
         def_training_args.update(
             {"save_strategy": "epoch", "save_total_limit": 1}
         )  # only save last model for each run
@@ -1237,11 +1236,10 @@ class Classifier:
         def_training_args["logging_steps"] = logging_steps
         def_training_args["output_dir"] = output_directory
         if eval_data is None:
-            if transformers_version >= parse("4.46"):
-                def_training_args["eval_strategy"] = "no"
-            else:
-                def_training_args["evaluation_strategy"] = "no"
+            def_training_args["evaluation_strategy"] = "no"
             def_training_args["load_best_model_at_end"] = False
+        if transformers_version >= parse("4.46"):
+            def_training_args["eval_strategy"] = def_training_args.pop("evaluation_strategy")
         training_args_init = TrainingArguments(**def_training_args)
 
         if self.freeze_layers is not None:
