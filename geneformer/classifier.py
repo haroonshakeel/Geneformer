@@ -92,6 +92,7 @@ class Classifier:
         "no_eval": {bool},
         "stratify_splits_col": {None, str},
         "forward_batch_size": {int},
+        "model_version": {"V1", "V2"},
         "token_dictionary_file": {None, str},
         "nproc": {int},
         "ngpu": {int},
@@ -115,6 +116,7 @@ class Classifier:
         stratify_splits_col=None,
         no_eval=False,
         forward_batch_size=100,
+        model_version="V2",
         token_dictionary_file=None,
         nproc=4,
         ngpu=1,
@@ -191,6 +193,9 @@ class Classifier:
             | Otherwise, will perform eval during training.
         forward_batch_size : int
             | Batch size for forward pass (for evaluation, not training).
+        model_version : str
+            | To auto-select settings for model version other than current default.
+            | Current options: V1: models pretrained on ~30M cells, V2: models pretrained on ~104M cells
         token_dictionary_file : None, str
             | Default is to use token dictionary file from Geneformer
             | Otherwise, will load custom gene token dictionary.
@@ -225,14 +230,20 @@ class Classifier:
         self.stratify_splits_col = stratify_splits_col
         self.no_eval = no_eval
         self.forward_batch_size = forward_batch_size
+        self.model_version = model_version
         self.token_dictionary_file = token_dictionary_file
         self.nproc = nproc
         self.ngpu = ngpu
 
+        if self.model_version == "V1":
+            from . import TOKEN_DICTIONARY_FILE_30M
+            self.token_dictionary_file = TOKEN_DICTIONARY_FILE_30M
+        
         if self.training_args is None:
             logger.warning(
                 "Hyperparameter tuning is highly recommended for optimal results. "
-                "No training_args provided; using default hyperparameters."
+                "No training_args provided; using default hyperparameters. "
+                "Please note: these defaults are not recommended to be used uniformly across tasks."
             )
 
         self.validate_options()
@@ -1319,7 +1330,7 @@ class Classifier:
         ##### Evaluate the model #####
         labels = id_class_dict.keys()
         y_pred, y_true, logits_list = eu.classifier_predict(
-            model, self.classifier, eval_data, self.forward_batch_size
+            model, self.classifier, eval_data, self.forward_batch_size, self.gene_token_dict
         )
         conf_mat, macro_f1, acc, roc_metrics = eu.get_metrics(
             y_pred, y_true, logits_list, num_classes, labels

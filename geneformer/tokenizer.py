@@ -32,9 +32,7 @@ Geneformer tokenizer.
 
 | If one's data is in other formats besides .loom or .h5ad, one can use the relevant tools (such as Anndata tools) to convert the file to a .loom or .h5ad format prior to running the transcriptome tokenizer.
 
-| OF NOTE: Take care that the correct token dictionary and gene median file is used for the correct model. 
-
-| OF NOTE: For 95M model series, special_token should be True and model_input_size should be 4096. For 30M model series, special_token should be False and model_input_size should be 2048.
+| OF NOTE: Use model_version to auto-select settings for model version other than current default. For V1 model series (original Geneformer pretrained in 2021 on ~30M cells), one must use correct corresponding token dictionary and gene median file, set special_token to False, and set model_input_size to 2048. This argument enables auto-selection of these settings. (For V2 model series, special_token must be True and model_input_size is 4096.)
 
 """
 
@@ -299,6 +297,7 @@ class TranscriptomeTokenizer:
         model_input_size=4096,
         special_token=True,
         collapse_gene_ids=True,
+        model_version="V2",
         gene_median_file=GENE_MEDIAN_FILE,
         token_dictionary_file=TOKEN_DICTIONARY_FILE,
         gene_mapping_file=ENSEMBL_MAPPING_FILE,
@@ -318,15 +317,18 @@ class TranscriptomeTokenizer:
             | Chunk size for anndata tokenizer.
         model_input_size : int = 4096
             | Max input size of model to truncate input to.
-            | For the 30M model series, should be 2048. For the 95M model series, should be 4096.
+            | For the V1 model series, should be 2048. For the V2 model series, should be 4096.
         special_token : bool = True
             | Adds CLS token before and EOS token after rank value encoding.
-            | For the 30M model series, should be False. For the 95M model series, should be True.
+            | For the V1 model series, should be False. For the V2 model series, should be True.
         collapse_gene_ids : bool = True
             | Whether to collapse gene IDs based on gene mapping dictionary.
+        model_version : str
+            | To auto-select settings for model version other than current default.
+            | Current options: V1: models pretrained on ~30M cells, V2: models pretrained on ~104M cells
         gene_median_file : Path
             | Path to pickle file containing dictionary of non-zero median
-            | gene expression values across Genecorpus-30M.
+            | gene expression values across Genecorpus.
         token_dictionary_file : Path
             | Path to pickle file containing token dictionary (Ensembl IDs:token).
         gene_mapping_file : None, Path
@@ -348,8 +350,22 @@ class TranscriptomeTokenizer:
         # add CLS and EOS tokens
         self.special_token = special_token
 
+        # CHANGE DEFAULTS TO BE FOR MODEL OTHER THAN CURRENT
+        self.model_version = model_version
+        if self.model_version not in ["V1","V2"]:
+            logger.error(
+                    "Unrecognized model version. Current options: V1: models pretrained on ~30M cells, V2: models pretrained on ~104M cells."
+                )
+        elif self.model_version == "V1":
+            self.model_input_size = 2048
+            self.special_token = False
+            from . import ENSEMBL_MAPPING_FILE_30M, GENE_MEDIAN_FILE_30M, TOKEN_DICTIONARY_FILE_30M
+            gene_median_file = GENE_MEDIAN_FILE_30M
+            token_dictionary_file = TOKEN_DICTIONARY_FILE_30M
+            gene_mapping_file = ENSEMBL_MAPPING_FILE_30M
+        
         # load dictionary of gene normalization factors
-        # (non-zero median value of expression across Genecorpus-30M)
+        # (non-zero median value of expression across Genecorpus)
         with open(gene_median_file, "rb") as f:
             self.gene_median_dict = pickle.load(f)
 
@@ -372,7 +388,7 @@ class TranscriptomeTokenizer:
                 "<eos>" in self.gene_token_dict.keys()
             ):
                 logger.warning(
-                    "<cls> and <eos> are in gene_token_dict but special_token = False. Please note that for 95M model series, special_token should be True."
+                    "<cls> and <eos> are in gene_token_dict but special_token = False. Please note that for V2 model series, special_token should be True."
                 )
 
         # if collapsing duplicate gene IDs

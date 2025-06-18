@@ -72,6 +72,7 @@ class InSilicoPerturber:
         "max_ncells": {None, int},
         "cell_inds_to_perturb": {"all", dict},
         "emb_layer": {-1, 0},
+        "model_version": {"V1", "V2"},
         "token_dictionary_file": {None, str},
         "forward_batch_size": {int},
         "nproc": {int},
@@ -96,6 +97,7 @@ class InSilicoPerturber:
         emb_layer=-1,
         forward_batch_size=100,
         nproc=4,
+        model_version="V2",
         token_dictionary_file=None,
         clear_mem_ncells=1000,
     ):
@@ -184,6 +186,9 @@ class InSilicoPerturber:
             | Batch size for forward pass.
         nproc : int
             | Number of CPU processes to use.
+        model_version : str
+            | To auto-select settings for model version other than current default.
+            | Current options: V1: models pretrained on ~30M cells, V2: models pretrained on ~104M cells
         token_dictionary_file : Path
             | Path to pickle file containing token dictionary (Ensembl ID:token).
         clear_mem_ncells : int
@@ -224,8 +229,23 @@ class InSilicoPerturber:
         self.emb_layer = emb_layer
         self.forward_batch_size = forward_batch_size
         self.nproc = nproc
+        self.model_version = model_version
         self.token_dictionary_file = token_dictionary_file
         self.clear_mem_ncells = clear_mem_ncells
+
+        if self.model_version == "V1":
+            from . import TOKEN_DICTIONARY_FILE_30M
+            self.token_dictionary_file = TOKEN_DICTIONARY_FILE_30M
+            if self.emb_mode == "cls":
+                self.emb_mode = "cell"
+                logger.warning(
+                    "model_version selected as V1 so changing emb_mode from 'cls' to 'cell' as V1 models do not have a <cls> token."
+                )                
+            if self.emb_mode == "cls_and_gene":
+                self.emb_mode = "cell_and_gene"
+                logger.warning(
+                    "model_version selected as V1 so changing emb_mode from 'cls_and_gene' to 'cell_and_gene' as V1 models do not have a <cls> token."
+                )                
 
         self.validate_options()
 

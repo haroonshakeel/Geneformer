@@ -402,6 +402,7 @@ class EmbExtractor:
         "emb_label": {None, list},
         "labels_to_plot": {None, list},
         "forward_batch_size": {int},
+        "model_version": {"V1", "V2"},
         "token_dictionary_file": {None, str},
         "nproc": {int},
         "summary_stat": {None, "mean", "median", "exact_mean", "exact_median"},
@@ -422,6 +423,7 @@ class EmbExtractor:
         forward_batch_size=100,
         nproc=4,
         summary_stat=None,
+        model_version="V2",
         token_dictionary_file=None,
     ):
         """
@@ -472,6 +474,9 @@ class EmbExtractor:
             | If mean or median, outputs only approximated mean or median embedding of input data.
             | Non-exact recommended if encountering memory constraints while generating goal embedding positions.
             | Non-exact is slower but more memory-efficient.
+        model_version : str
+            | To auto-select settings for model version other than current default.
+            | Current options: V1: models pretrained on ~30M cells, V2: models pretrained on ~104M cells
         token_dictionary_file : Path
             | Default is the Geneformer token dictionary
             | Path to pickle file containing token dictionary (Ensembl ID:token).
@@ -502,6 +507,7 @@ class EmbExtractor:
         self.emb_layer = emb_layer
         self.emb_label = emb_label
         self.labels_to_plot = labels_to_plot
+        self.model_version = model_version
         self.token_dictionary_file = token_dictionary_file
         self.forward_batch_size = forward_batch_size
         self.nproc = nproc
@@ -511,6 +517,15 @@ class EmbExtractor:
         else:
             self.summary_stat = summary_stat
             self.exact_summary_stat = None
+
+        if self.model_version == "V1":
+            from . import TOKEN_DICTIONARY_FILE_30M
+            self.token_dictionary_file = TOKEN_DICTIONARY_FILE_30M
+            if self.emb_mode == "cls":
+                self.emb_mode = "cell"
+                logger.warning(
+                    "model_version selected as V1 so changing emb_mode from 'cls' to 'cell' as V1 models do not have a <cls> token."
+                ) 
 
         self.validate_options()
 
