@@ -94,7 +94,7 @@ def remove_rare(data, rare_threshold, label, nproc):
     return data
 
 
-def label_classes(classifier, data, gene_class_dict, nproc):
+def label_classes(classifier, data, gene_class_dict, nproc, id_class_dict):
     if classifier == "cell":
         label_set = set(data["label"])
     elif classifier == "gene":
@@ -113,8 +113,11 @@ def label_classes(classifier, data, gene_class_dict, nproc):
             )
             raise
 
-    class_id_dict = dict(zip(label_set, [i for i in range(len(label_set))]))
-    id_class_dict = {v: k for k, v in class_id_dict.items()}
+    if id_class_dict is None:
+        class_id_dict = dict(zip(label_set, [i for i in range(len(label_set))]))
+        id_class_dict = {v: k for k, v in class_id_dict.items()}
+    else:
+        class_id_dict = {v: k for k, v in id_class_dict.items()}
 
     if classifier == "gene":
         inverse_gene_class_dict = {}

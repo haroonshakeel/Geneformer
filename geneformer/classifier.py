@@ -368,6 +368,7 @@ class Classifier:
         attr_to_balance=None,
         max_trials=100,
         pval_threshold=0.1,
+        id_class_dict_path=None,
     ):
         """
         Prepare data for cell state or gene classification.
@@ -410,6 +411,10 @@ class Classifier:
         pval_threshold : None, float
             | P-value threshold to use for attribute balancing across splits
             | E.g. if set to 0.1, will accept trial if p >= 0.1 for all attributes in attr_to_balance
+        id_class_dict_path : Path
+            | Path to *_id_class_dict.pkl from prior run of prepare_data to reuse for labeling new data
+            | Dictionary with keys being numeric class labels and values being original dataset class labels
+            | Note: only available for CellClassifiers
         """
 
         if test_size is None:
@@ -453,8 +458,13 @@ class Classifier:
             data = cu.rename_cols(data, self.cell_state_dict["state_key"])
             
             # convert classes to numerical labels and save as id_class_dict
+            if id_class_dict_path is not None:
+                with open(id_class_dict_path,"rb") as fp:
+                    id_class_dict = pickle.load(fp)
+            else:
+                id_class_dict = None
             data, id_class_dict = cu.label_classes(
-                self.classifier, data, self.cell_state_dict, self.nproc
+                self.classifier, data, self.cell_state_dict, self.nproc, id_class_dict,
             )
 
         elif self.classifier == "gene":
