@@ -193,20 +193,29 @@ def load_model(model_type, num_classes, model_directory, mode, quantize=False):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if not quantize:
         # Only move non-quantized models
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = model.to(device)
+        move_to_cuda(model)
     elif os.path.exists(adapter_config_path):
         # If adapter files exist, load them into the model using PEFT's from_pretrained
         model = PeftModel.from_pretrained(model, model_directory)
-        model = model.to(device)
+        move_to_cuda(model)
         print("loading lora weights")
     elif peft_config:
         # Apply PEFT for quantized models (except MTLCellClassifier and CellClassifier-QuantInf)
         model.enable_input_require_grads()
         model = get_peft_model(model, peft_config)
-        model = model.to(device)
+        move_to_cuda(model)
 
     return model
+
+
+def move_to_cuda(model):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # get what device model is currently on
+    model_device = next(model.parameters()).device
+    # Check if the model is on the CPU and move to cuda if necessary
+    if (model_device.type == 'cpu') and (device == "cuda"):
+        model.to(device)
+
 
 def quant_layers(model):
     layer_nums = []
