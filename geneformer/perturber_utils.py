@@ -213,7 +213,7 @@ def move_to_cuda(model):
     # get what device model is currently on
     model_device = next(model.parameters()).device
     # Check if the model is on the CPU and move to cuda if necessary
-    if (model_device.type == 'cpu') and (device == "cuda"):
+    if (model_device.type == "cpu") and (device.type == "cuda"):
         model.to(device)
 
 
