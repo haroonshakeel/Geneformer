@@ -231,7 +231,9 @@ class InSilicoPerturber:
         self.nproc = nproc
         self.model_version = model_version
         self.token_dictionary_file = token_dictionary_file
-        self.clear_mem_ncells = clear_mem_ncells
+        self.clear_mem_ncells = clear_mem_ncells             
+
+        self.validate_options()
 
         if self.model_version == "V1":
             from . import TOKEN_DICTIONARY_FILE_30M
@@ -245,10 +247,8 @@ class InSilicoPerturber:
                 self.emb_mode = "cell_and_gene"
                 logger.warning(
                     "model_version selected as V1 so changing emb_mode from 'cls_and_gene' to 'cell_and_gene' as V1 models do not have a <cls> token."
-                )                
-
-        self.validate_options()
-
+                )
+        
         # load token dictionary (Ensembl IDs:token)
         if self.token_dictionary_file is None:
             token_dictionary_file = TOKEN_DICTIONARY_FILE

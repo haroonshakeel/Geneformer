@@ -234,10 +234,6 @@ class Classifier:
         self.token_dictionary_file = token_dictionary_file
         self.nproc = nproc
         self.ngpu = ngpu
-
-        if self.model_version == "V1":
-            from . import TOKEN_DICTIONARY_FILE_30M
-            self.token_dictionary_file = TOKEN_DICTIONARY_FILE_30M
         
         if self.training_args is None:
             logger.warning(
@@ -258,7 +254,10 @@ class Classifier:
                 ] = self.cell_state_dict["states"]
 
         # load token dictionary (Ensembl IDs:token)
-        if self.token_dictionary_file is None:
+        if self.model_version == "V1":
+            from . import TOKEN_DICTIONARY_FILE_30M
+            self.token_dictionary_file = TOKEN_DICTIONARY_FILE_30M
+        elif self.token_dictionary_file is None:
             self.token_dictionary_file = TOKEN_DICTIONARY_FILE
         with open(self.token_dictionary_file, "rb") as f:
             self.gene_token_dict = pickle.load(f)

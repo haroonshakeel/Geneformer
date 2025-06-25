@@ -518,6 +518,8 @@ class EmbExtractor:
             self.summary_stat = summary_stat
             self.exact_summary_stat = None
 
+        self.validate_options()
+
         if self.model_version == "V1":
             from . import TOKEN_DICTIONARY_FILE_30M
             self.token_dictionary_file = TOKEN_DICTIONARY_FILE_30M
@@ -526,8 +528,6 @@ class EmbExtractor:
                 logger.warning(
                     "model_version selected as V1 so changing emb_mode from 'cls' to 'cell' as V1 models do not have a <cls> token."
                 ) 
-
-        self.validate_options()
 
         # load token dictionary (Ensembl IDs:token)
         if self.token_dictionary_file is None:
