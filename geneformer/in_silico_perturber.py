@@ -251,8 +251,8 @@ class InSilicoPerturber:
         
         # load token dictionary (Ensembl IDs:token)
         if self.token_dictionary_file is None:
-            token_dictionary_file = TOKEN_DICTIONARY_FILE
-        with open(token_dictionary_file, "rb") as f:
+            self.token_dictionary_file = TOKEN_DICTIONARY_FILE
+        with open(self.token_dictionary_file, "rb") as f:
             self.gene_token_dict = pickle.load(f)
         self.token_gene_dict = {v: k for k, v in self.gene_token_dict.items()}
 
