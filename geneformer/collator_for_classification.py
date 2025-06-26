@@ -644,7 +644,8 @@ class DataCollatorForGeneClassification(DataCollatorForTokenClassification):
     def __call__(self, features):
         batch = self._prepare_batch(features)
 
-        batch = {k: torch.tensor(v, dtype=torch.int64) for k, v in batch.items()}
+        # batch = {k: torch.tensor(v, dtype=torch.int64) for k, v in batch.items()}
+        batch = {k: torch.tensor(v.clone().detach(), dtype=torch.int64) if isinstance(v, torch.Tensor) else torch.tensor(v, dtype=torch.int64) for k, v in batch.items()}
         return batch
 
 
