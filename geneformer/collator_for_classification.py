@@ -26,8 +26,9 @@ LARGE_INTEGER = int(
     1e20
 )  # This is used when we need something big but slightly smaller than VERY_LARGE_INTEGER
 
-# precollator functions
+warnings.filterwarnings("ignore", message="To copy construct from a tensor, it is recommended to use sourceTensor.clone().detach()", category=UserWarning, module="torch")
 
+# precollator functions
 
 class ExplicitEnum(Enum):
     """
