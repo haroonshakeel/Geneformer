@@ -103,6 +103,9 @@ class PrecollatorForGeneAndCellClassification(SpecialTokensMixin):
     def pad_token_id(self):
         return self._pad_token_id
 
+    def save_pretrained(self, save_directory):
+        pass
+
     def _get_padding_truncation_strategies(
         self,
         padding=True,
