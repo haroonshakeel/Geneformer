@@ -278,14 +278,18 @@ def label_gene_embs(embs, downsampled_data, token_gene_dict):
     return embs_df
 
 
-def plot_umap(embs_df, emb_dims, label, output_file, kwargs_dict, seed=0):
+def plot_umap(embs_df, emb_dims, labels_clean, output_prefix, output_directory, kwargs_dict, seed=0):
     only_embs_df = embs_df.iloc[:, :emb_dims]
     only_embs_df.index = pd.RangeIndex(0, only_embs_df.shape[0], name=None).astype(str)
     only_embs_df.columns = pd.RangeIndex(0, only_embs_df.shape[1], name=None).astype(
         str
     )
     vars_dict = {"embs": only_embs_df.columns}
-    obs_dict = {"cell_id": list(only_embs_df.index), f"{label}": list(embs_df[label])}
+    
+    obs_dict = {"cell_id": list(only_embs_df.index)}
+    for label_i in labels_clean:
+        obs_dict[label_i] = list(embs_df[label_i])
+
     adata = anndata.AnnData(X=only_embs_df, obs=obs_dict, var=vars_dict)
     sc.tl.pca(adata, svd_solver="arpack")
     sc.pp.neighbors(adata, random_state=seed)
@@ -296,21 +300,26 @@ def plot_umap(embs_df, emb_dims, label, output_file, kwargs_dict, seed=0):
     if kwargs_dict is not None:
         default_kwargs_dict.update(kwargs_dict)
 
-    cats = set(embs_df[label])
+    for label_i in labels_clean:
+        output_prefix_label = output_prefix + f"_umap_{label_i}"
+        output_file = (
+            Path(output_directory) / output_prefix_label
+        ).with_suffix(".pdf")
 
-    with plt.rc_context():
-        ax = sc.pl.umap(adata, color=label, show=False, **default_kwargs_dict)
-        ax.legend(
-            markerscale=2,
-            frameon=False,
-            loc="center left",
-            bbox_to_anchor=(1, 0.5),
-            ncol=(1 if len(cats) <= 14 else 2 if len(cats) <= 30 else 3),
-        )
-        plt.show()
-        plt.savefig(output_file, bbox_inches="tight")
+        cats = set(embs_df[label_i])
 
-
+        with plt.rc_context():
+            ax = sc.pl.umap(adata, color=label_i, show=False, **default_kwargs_dict)
+            ax.legend(
+                markerscale=2,
+                frameon=False,
+                loc="center left",
+                bbox_to_anchor=(1, 0.5),
+                ncol=(1 if len(cats) <= 14 else 2 if len(cats) <= 30 else 3),
+            )
+            plt.show()
+            plt.savefig(output_file, bbox_inches="tight")
+    
 def gen_heatmap_class_colors(labels, df):
     pal = sns.cubehelix_palette(
         len(Counter(labels).keys()),
@@ -856,12 +865,9 @@ class EmbExtractor:
                         f"Label {label} from labels_to_plot "
                         f"not present in provided embeddings dataframe."
                     )
-                    continue
-                output_prefix_label = output_prefix + f"_umap_{label}"
-                output_file = (
-                    Path(output_directory) / output_prefix_label
-                ).with_suffix(".pdf")
-                plot_umap(embs, emb_dims, label, output_file, kwargs_dict)
+
+            labels_clean = [label for label in self.labels_to_plot if label in emb_labels] 
+            plot_umap(embs, emb_dims, labels_clean, output_prefix, output_directory, kwargs_dict)
 
         if plot_style == "heatmap":
             for label in self.labels_to_plot:
