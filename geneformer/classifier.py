@@ -43,7 +43,6 @@ Geneformer classifier.
     ...                     custom_class_order=["healthy","disease1","disease2"])
 """
 
-import datetime
 import logging
 import os
 import pickle
@@ -96,6 +95,7 @@ class Classifier:
         "token_dictionary_file": {None, str},
         "nproc": {int},
         "ngpu": {int},
+        "freeze_entire_model": {bool},
     }
 
     def __init__(
@@ -120,6 +120,7 @@ class Classifier:
         token_dictionary_file=None,
         nproc=4,
         ngpu=1,
+        freeze_entire_model=False,
     ):
         """
         Initialize Geneformer classifier.
@@ -203,6 +204,9 @@ class Classifier:
             | Number of CPU processes to use.
         ngpu : int
             | Number of GPUs available.
+        freeze_entire_model : bool
+            | If True, will freeze all layers of the model during fine-tuning.
+            | If False, will freeze only the specified number of layers with freeze_layers.
 
         """
 
@@ -234,6 +238,7 @@ class Classifier:
         self.token_dictionary_file = token_dictionary_file
         self.nproc = nproc
         self.ngpu = ngpu
+        self.freeze_entire_model = freeze_entire_model
         
         if self.training_args is None:
             logger.warning(
@@ -604,11 +609,9 @@ class Classifier:
         data = data.shuffle(seed=42)  # reshuffle in case users provide unshuffled data
 
         # define output directory path
-        current_date = datetime.datetime.now()
-        datestamp = f"{str(current_date.year)[-2:]}{current_date.month:02d}{current_date.day:02d}"
         if output_directory[-1:] != "/":  # add slash for dir if not present
             output_directory = output_directory + "/"
-        output_dir = f"{output_directory}{datestamp}_geneformer_{self.classifier}Classifier_{output_prefix}/"
+        output_dir = f"{output_directory}_geneformer_{self.classifier}Classifier_{output_prefix}/"
         subprocess.call(f"mkdir {output_dir}", shell=True)
 
         # get number of classes for classifier
@@ -740,11 +743,9 @@ class Classifier:
         data = data.shuffle(seed=42)  # reshuffle in case users provide unshuffled data
 
         # define output directory path
-        current_date = datetime.datetime.now()
-        datestamp = f"{str(current_date.year)[-2:]}{current_date.month:02d}{current_date.day:02d}"
         if output_directory[-1:] != "/":  # add slash for dir if not present
             output_directory = output_directory + "/"
-        output_dir = f"{output_directory}{datestamp}_geneformer_{self.classifier}Classifier_{output_prefix}/"
+        output_dir = f"{output_directory}_geneformer_{self.classifier}Classifier_{output_prefix}/"
         subprocess.call(f"mkdir {output_dir}", shell=True)
 
         # get number of classes for classifier
@@ -1116,11 +1117,42 @@ class Classifier:
             if self.freeze_layers is not None:
                 def_freeze_layers = self.freeze_layers
 
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+            total_params = trainable_params + non_trainable_params
+
+            print(f"Total parameters: {total_params:,}")
+
+            print(f"Trainable parameters before freezing model: {trainable_params:,}")
+            print(f"Non-trainable parameters before freezing model: {non_trainable_params:,}")
+            
+                        
+
             if def_freeze_layers > 0:
                 modules_to_freeze = model.bert.encoder.layer[:def_freeze_layers]
                 for module in modules_to_freeze:
                     for param in module.parameters():
                         param.requires_grad = False
+
+                trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+
+                print(f"Trainable parameters after freezing encoder layers: {trainable_params:,}")
+                print(f"Non-trainable parameters after freezing encoder layers: {non_trainable_params:,}")
+            
+
+            if self.freeze_entire_model:
+                # Freeze all parameters in the model
+                for param in model.parameters():
+                    param.requires_grad = False
+                
+                trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+
+                print(f"Trainable parameters after freezing entire model: {trainable_params:,}")
+                print(f"Non-trainable parameters after freezing entire model: {non_trainable_params:,}")
+            
+
 
             if self.quantize is False:
                 model = model.to("cuda:0")
@@ -1270,6 +1302,25 @@ class Classifier:
             for module in modules_to_freeze:
                 for param in module.parameters():
                     param.requires_grad = False
+
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+
+            print(f"Trainable parameters after freezing encoder layers: {trainable_params:,}")
+            print(f"Non-trainable parameters after freezing encoder layers: {non_trainable_params:,}")
+        
+
+        if self.freeze_entire_model:
+            # Freeze all parameters in the model
+            for param in model.parameters():
+                param.requires_grad = False
+            
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+
+            print(f"Trainable parameters after freezing entire model: {trainable_params:,}")
+            print(f"Non-trainable parameters after freezing entire model: {non_trainable_params:,}")
+            
 
         ##### Fine-tune the model #####
         # define the data collator
