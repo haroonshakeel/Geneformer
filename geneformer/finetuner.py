@@ -1,6 +1,6 @@
 import datetime
-import classifier
-import finetuner_utils
+from geneformer.classifier import Classifier
+import geneformer.finetuner_utils
 
 import numpy as np
 import torch
@@ -249,7 +249,7 @@ class FineTuner:
         """
         
         # Get pretrained model path
-        pretrained_model_path = self.get_pretrained_model_path()
+        pretrained_model_path = self._get_pretrained_model_path()
         
         # Initialize Classifier
         # OF NOTE: token_dictionary_file must be set to the gc-30M token dictionary if using a 30M series model

@@ -35,7 +35,7 @@ Geneformer classifier.
     ...                  output_directory="path/to/output_directory",
     ...                  output_prefix="output_prefix",
     ...                  custom_class_order=["healthy","disease1","disease2"])
-    >>> cc.plot_predictions(predictions_file=f"path/to/output_directory/datestamp_geneformer_cellClassifier_{output_prefix}/ksplit1/predictions.pkl",
+    >>> cc.plot_predictions(predictions_file=f"path/to/output_directory/geneformer_cellClassifier_{output_prefix}/ksplit1/predictions.pkl",
     ...                     id_class_dict_file=f"path/to/output_directory/{output_prefix}_id_class_dict.pkl",
     ...                     title="disease",
     ...                     output_directory="path/to/output_directory",
@@ -611,7 +611,7 @@ class Classifier:
         # define output directory path
         if output_directory[-1:] != "/":  # add slash for dir if not present
             output_directory = output_directory + "/"
-        output_dir = f"{output_directory}_geneformer_{self.classifier}Classifier_{output_prefix}/"
+        output_dir = f"{output_directory}geneformer_{self.classifier}Classifier_{output_prefix}/"
         subprocess.call(f"mkdir {output_dir}", shell=True)
 
         # get number of classes for classifier
@@ -745,7 +745,7 @@ class Classifier:
         # define output directory path
         if output_directory[-1:] != "/":  # add slash for dir if not present
             output_directory = output_directory + "/"
-        output_dir = f"{output_directory}_geneformer_{self.classifier}Classifier_{output_prefix}/"
+        output_dir = f"{output_directory}geneformer_{self.classifier}Classifier_{output_prefix}/"
         subprocess.call(f"mkdir {output_dir}", shell=True)
 
         # get number of classes for classifier
@@ -1143,8 +1143,14 @@ class Classifier:
 
             if self.freeze_entire_model:
                 # Freeze all parameters in the model
-                for param in model.parameters():
-                    param.requires_grad = False
+                for name, param in model.named_parameters():
+                    # Keep classifier layers trainable (common names: classifier, head, fc, linear)
+                    if any(classifier_name in name.lower() for classifier_name in ['classifier', 'head', 'fc', 'linear']):
+                        print(f"Keeping trainable: {name}")
+                        param.requires_grad = True
+                    else:
+                        print(f"Freezing parameter: {name}")
+                        param.requires_grad = False
                 
                 trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
                 non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
@@ -1297,6 +1303,15 @@ class Classifier:
         if self.freeze_layers is not None:
             def_freeze_layers = self.freeze_layers
 
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+        total_params = trainable_params + non_trainable_params
+
+        print(f"Total parameters: {total_params:,}")
+
+        print(f"Trainable parameters before freezing model: {trainable_params:,}")
+        print(f"Non-trainable parameters before freezing model: {non_trainable_params:,}")
+
         if def_freeze_layers > 0:
             modules_to_freeze = model.bert.encoder.layer[:def_freeze_layers]
             for module in modules_to_freeze:
@@ -1312,8 +1327,14 @@ class Classifier:
 
         if self.freeze_entire_model:
             # Freeze all parameters in the model
-            for param in model.parameters():
-                param.requires_grad = False
+            for name, param in model.named_parameters():
+                # Keep classifier layers trainable (common names: classifier, head, fc, linear)
+                if any(classifier_name in name.lower() for classifier_name in ['classifier', 'head', 'fc', 'linear']):
+                    print(f"Keeping trainable: {name}")
+                    param.requires_grad = True
+                else:
+                    print(f"Freezing parameter: {name}")
+                    param.requires_grad = False
             
             trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
             non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)

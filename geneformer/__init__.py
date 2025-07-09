@@ -33,6 +33,7 @@ from .pretrainer import GeneformerPretrainer
 from .tokenizer import TranscriptomeTokenizer
 
 from . import classifier  # noqa # isort:skip
+from . import finetuner
 from .classifier import Classifier  # noqa # isort:skip
 
 from . import mtl_classifier  # noqa # isort:skip
