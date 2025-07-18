@@ -8,7 +8,7 @@ import os
 import random
 import glob
 import json
-
+import pickle
 
 
 seed_num = 0
@@ -23,7 +23,7 @@ import os
 
 class FineTuner:
     def __init__(self, base_dir=None, aggregation_level=None, model_variant=None, 
-                 task=None, dataset=None, model_version="V1"):
+                 task=None, dataset=None, model_version="V1", crossval_splits=1):
         """
         Initialize the FineTuner class with configuration parameters.
         
@@ -53,6 +53,7 @@ class FineTuner:
         self.TASK = task or "disease_classification"
         self.DATASET = dataset or "cellnexus_covid_disease"
         self.MODEL_VERSION = model_version
+        self.CROSSVAL_SPLITS = crossval_splits
 
         self.DATASET_PATH = os.path.join(self.BASE_DIR, "datasets", self.TASK, self.DATASET)
 
@@ -67,7 +68,8 @@ class FineTuner:
         # Valid combinations
         self.VALID_COMBINATIONS = {
             "disease_classification": ["genecorpus_heart_disease", "cellnexus_blood_disease", "cellnexus_covid_disease"],
-            "dosage_sensitivity": ["genecorpus_dosage_sensitivity"]
+            "dosage_sensitivity": ["genecorpus_dosage_sensitivity"],
+            "cell_type_classification": ["cellnexus_cell_types"]
         }
         
         # Validate inputs
@@ -118,18 +120,26 @@ class FineTuner:
     
     def _set_classifier_type(self):
         """Set classifier type based on task."""
-        if self.TASK == "disease_classification":
+        if self.TASK == "disease_classification" or self.TASK == "cell_type_classification":
             self.classifier_type = "cell"
         elif self.TASK == "dosage_sensitivity":
             self.classifier_type = "gene"
         else:
-            raise ValueError("TASK must be either 'disease_classification' or 'dosage_sensitivity'")
+            raise ValueError("TASK must be either 'disease_classification' or 'cell_type_classification' or 'dosage_sensitivity'")
     
     def _create_output_directory(self):
+        trained_models_base_dir_prefix = "" if self.CROSSVAL_SPLITS == 1 else "5fold_cv_"
+        if self.TASK == "disease_classification" or self.TASK == "cell_type_classification":
+            trained_models_base_dir = trained_models_base_dir_prefix + "trained_cell_classification_models"
+        elif self.TASK == "dosage_sensitivity":
+            trained_models_base_dir = trained_models_base_dir_prefix + "trained_gene_classification_models"
+        else:
+            raise ValueError("TASK must be either 'disease_classification', 'dosage_sensitivity', or 'cell_type_classification'")   
+    
         """Create output directory."""
         self.output_dir = os.path.join(
             self.BASE_DIR, 
-            "trained_cell_classification_models", 
+            trained_models_base_dir, 
             self.TASK, 
             self.DATASET, 
             f"{self.MODEL_VARIANT}_{self.AGGREGATION_LEVEL}"
@@ -221,7 +231,7 @@ class FineTuner:
     def finetune_model(self, training_args, cell_state_dict, filter_data_dict, 
                   input_data_file, output_prefix, train_test_id_split_dict, 
                   train_valid_id_split_dict, num_crossval_splits=1,
-                  freeze_num_encoder_layers=2, freeze_entire_model=False):
+                  freeze_num_encoder_layers=2, freeze_entire_model=False, split_sizes={"train": 0.8, "valid": 0.1, "test": 0.1}):
         """
         Fine-tune the model using the Classifier.
         
@@ -250,6 +260,13 @@ class FineTuner:
         
         # Get pretrained model path
         pretrained_model_path = self._get_pretrained_model_path()
+
+        if self.TASK == "dosage_sensitivity" and self.DATASET == "genecorpus_dosage_sensitivity":
+
+            with open(os.path.join(self.DATASET_PATH, "dosage_sensitivity_TFs.pickle"), "rb") as fp:
+                gene_class_dict = pickle.load(fp)
+        else:
+            gene_class_dict = None
         
         # Initialize Classifier
         # OF NOTE: token_dictionary_file must be set to the gc-30M token dictionary if using a 30M series model
@@ -257,6 +274,7 @@ class FineTuner:
         # 30M token dictionary: https://huggingface.co/ctheodoris/Geneformer/blob/main/geneformer/gene_dictionaries_30m/token_dictionary_gc30M.pkl
         cc = Classifier(
             classifier=self.classifier_type,
+            gene_class_dict=gene_class_dict,
             # model_version=self.model_version,
             cell_state_dict=cell_state_dict,
             filter_data=filter_data_dict,
@@ -268,7 +286,8 @@ class FineTuner:
             token_dictionary_file=self.TOKEN_DICTIONARY_FILE,
             nproc=16,
             ngpu = self.num_gpus,
-            freeze_entire_model = freeze_entire_model
+            freeze_entire_model = freeze_entire_model,
+            split_sizes=split_sizes
         )
         
         ### num_crossval_splits : {0, 1, 5}

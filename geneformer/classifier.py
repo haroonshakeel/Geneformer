@@ -45,10 +45,12 @@ Geneformer classifier.
 
 import logging
 import os
+import glob
 import pickle
 import subprocess
 from packaging.version import parse
 from pathlib import Path
+import torch
 
 import numpy as np
 import pandas as pd
@@ -57,6 +59,7 @@ import transformers
 from tqdm.auto import tqdm, trange
 from transformers import Trainer
 from transformers.training_args import TrainingArguments
+from transformers import BertForSequenceClassification
 
 from . import (
     TOKEN_DICTIONARY_FILE,
@@ -655,6 +658,7 @@ class Classifier:
         n_hyperopt_trials=0,
         save_gene_split_datasets=True,
         debug_gene_split_datasets=False,
+        save_cell_split_datasets=True,
     ):
         """
         (Cross-)validate cell state or gene classifier.
@@ -811,32 +815,54 @@ class Classifier:
                     ]
                     eval_data = data.select(eval_indices)
                     train_data = data.select(train_indices)
-                if n_hyperopt_trials == 0:
-                    trainer = self.train_classifier(
-                        model_directory,
-                        num_classes,
-                        train_data,
-                        eval_data,
-                        ksplit_output_dir,
-                        predict_trainer,
-                    )
+
+                    if save_cell_split_datasets is True:
+                        for split_name in ["train", "valid"]:
+                            labeled_dataset_output_path = (
+                                Path(output_dir)
+                                / f"{output_prefix}_{split_name}_cell_labeled_ksplit{iteration_num}"
+                            ).with_suffix(".dataset")
+                            if split_name == "train":
+                                train_data.save_to_disk(str(labeled_dataset_output_path))
+                            elif split_name == "valid":
+                                eval_data.save_to_disk(str(labeled_dataset_output_path))
+
+                pytorch_model_path = os.path.join(ksplit_output_dir, "pytorch_model.bin")
+                model_exists = os.path.isfile(pytorch_model_path)
+                if model_exists:
+                    # Load existing model directly
+                    print(f"Loading existing model from {ksplit_output_dir}")
+                    model_ = BertForSequenceClassification.from_pretrained(ksplit_output_dir)
+
                 else:
-                    trainer = self.hyperopt_classifier(
-                        model_directory,
-                        num_classes,
-                        train_data,
-                        eval_data,
-                        ksplit_output_dir,
-                        n_trials=n_hyperopt_trials,
-                    )
-                    if iteration_num == self.num_crossval_splits:
-                        return
+                    if n_hyperopt_trials == 0:
+                        trainer = self.train_classifier(
+                            model_directory,
+                            num_classes,
+                            train_data,
+                            eval_data,
+                            ksplit_output_dir,
+                            predict_trainer,
+                        )
                     else:
-                        iteration_num = iteration_num + 1
-                        continue
+                        trainer = self.hyperopt_classifier(
+                            model_directory,
+                            num_classes,
+                            train_data,
+                            eval_data,
+                            ksplit_output_dir,
+                            n_trials=n_hyperopt_trials,
+                        )
+                        if iteration_num == self.num_crossval_splits:
+                            return
+                        else:
+                            iteration_num = iteration_num + 1
+                            continue
+
+                    model_ = trainer.model
 
                 result = self.evaluate_model(
-                    trainer.model,
+                    model_,
                     num_classes,
                     id_class_dict,
                     eval_data,
@@ -1145,7 +1171,7 @@ class Classifier:
                 # Freeze all parameters in the model
                 for name, param in model.named_parameters():
                     # Keep classifier layers trainable (common names: classifier, head, fc, linear)
-                    if any(classifier_name in name.lower() for classifier_name in ['classifier', 'head', 'fc', 'linear']):
+                    if any(classifier_name in name.lower() for classifier_name in ['classifier', 'head', 'fc', 'linear', 'pooler']):
                         print(f"Keeping trainable: {name}")
                         param.requires_grad = True
                     else:
@@ -1329,7 +1355,7 @@ class Classifier:
             # Freeze all parameters in the model
             for name, param in model.named_parameters():
                 # Keep classifier layers trainable (common names: classifier, head, fc, linear)
-                if any(classifier_name in name.lower() for classifier_name in ['classifier', 'head', 'fc', 'linear']):
+                if any(classifier_name in name.lower() for classifier_name in ['classifier', 'head', 'fc', 'linear', 'pooler']):
                     print(f"Keeping trainable: {name}")
                     param.requires_grad = True
                 else:
@@ -1364,8 +1390,27 @@ class Classifier:
             compute_metrics=cu.compute_metrics,
         )
 
+        # Find the most recent checkpoint
+        def find_latest_checkpoint(output_dir):
+            checkpoints = glob.glob(os.path.join(output_dir, "checkpoint-*"))
+            if not checkpoints:
+                return None
+            # Sort by checkpoint number and return the latest
+            latest = max(checkpoints, key=lambda x: int(x.split("-")[-1]))
+            return latest
+
+        # Get the latest checkpoint
+        latest_checkpoint = find_latest_checkpoint(training_args_init.output_dir)
+
         # train the classifier
-        trainer.train()
+        if latest_checkpoint is not None:
+            print(f"Resuming training from checkpoint: {latest_checkpoint}")
+            with torch.serialization.safe_globals([np.core.multiarray._reconstruct, np.ndarray]):
+
+                trainer.train(resume_from_checkpoint=latest_checkpoint)
+        else:
+            print("Starting training from scratch.")    
+            trainer.train()
         trainer.save_model(output_directory)
         if predict is True:
             # make eval predictions and save predictions and metrics
